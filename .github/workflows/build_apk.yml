@@ -1,7 +1,7 @@
 name: Build APK
 
 on:
-  workflow_dispatch: # Manual trigger only
+  workflow_dispatch: # Manual trigger
 
 jobs:
   build:
@@ -11,17 +11,19 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Java
+      - name: Setup Java (with Gradle Cache)
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
+          cache: 'gradle' # <--- This enables caching for Gradle!
 
-      - name: Setup Node.js
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
-          # Cache removed to prevent "lock file not found" error
+          node-version: '20' # <--- Upgraded from 18 to fix "toReversed" error
+          # We cannot cache NPM yet because you haven't committed package-lock.json
+          # but Gradle caching is the most important one for speed.
 
       - name: Install Dependencies
         run: npm install
