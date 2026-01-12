@@ -1,7 +1,7 @@
 name: Build APK
 
-on:
-  workflow_dispatch: # Manual trigger only
+on: 
+  workflow_dispatch:
 
 jobs:
   build:
@@ -17,7 +17,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '18'
-          # cache: 'npm' <--- REMOVED THIS to fix the error
           
       - name: Install Dependencies
         run: npm install
