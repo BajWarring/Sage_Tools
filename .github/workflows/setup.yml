@@ -1,0 +1,102 @@
+name: Initialize Sage Tools
+
+on:
+  workflow_dispatch: # Allows you to run this manually
+
+permissions:
+  contents: write # Important: Allows this workflow to commit code to your repo
+
+jobs:
+  bootstrap-project:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+
+      - name: Create React Native App
+        run: |
+          # Initialize the app in a subfolder
+          npx --yes @react-native-community/cli init SageTools --package-name com.sage.tools --skip-install
+          
+          # Move files to root so they aren't stuck inside a "SageTools" folder
+          mv SageTools/* .
+          mv SageTools/.* . || true
+          rmdir SageTools
+
+      - name: Update Display Name
+        run: |
+          # Change "SageTools" to "Sage Tools" in app.json
+          sed -i 's/"displayName": "SageTools"/"displayName": "Sage Tools"/' app.json
+
+      - name: Generate Signing Key
+        run: |
+          # Generate a keystore file directly in the android/app folder
+          cd android/app
+          keytool -genkeypair -v -storetype PKCS12 -keystore release.keystore -alias sage-key -keyalg RSA -keysize 2048 -validity 10000 -storepass sage123 -keypass sage123 -dname "CN=Sage Tools, OU=Mobile, O=Sage, L=City, ST=State, C=US"
+
+      - name: Configure Gradle for Signing
+        run: |
+          # TRICK: We replace the default debug keystore config with our new release keystore
+          # This ensures the default release build works without complex editing
+          cd android/app
+          sed -i 's/debug.keystore/release.keystore/' build.gradle
+          sed -i 's/androiddebugkey/sage-key/' build.gradle
+          sed -i 's/storePassword "android"/storePassword "sage123"/' build.gradle
+          sed -i 's/keyPassword "android"/keyPassword "sage123"/' build.gradle
+
+      - name: Create Build Workflow
+        run: |
+          # Create the permanent build workflow file
+          mkdir -p .github/workflows
+          cat <<EOF > .github/workflows/build_apk.yml
+          name: Build APK
+          on:
+            push:
+              branches: [ "main" ]
+            workflow_dispatch:
+          jobs:
+            build:
+              runs-on: ubuntu-latest
+              steps:
+                - uses: actions/checkout@v4
+                - uses: actions/setup-java@v4
+                  with:
+                    distribution: 'zulu'
+                    java-version: '17'
+                - uses: actions/setup-node@v4
+                  with:
+                    node-version: '18'
+                    cache: 'npm'
+                - run: npm install
+                - name: Build Release APK
+                  cd android
+                  run: |
+                    chmod +x gradlew
+                    ./gradlew assembleRelease
+                - uses: actions/upload-artifact@v4
+                  with:
+                    name: SageTools-APK
+                    path: android/app/build/outputs/apk/release/app-release.apk
+          EOF
+
+      - name: Commit and Push
+        run: |
+          git add .
+          git commit -m "Bootstrap: Initialize Sage Tools App"
+          git push
