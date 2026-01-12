@@ -1,10 +1,10 @@
 name: Initialize Sage Tools
 
 on:
-  workflow_dispatch: # Allows you to run this manually
+  workflow_dispatch:
 
 permissions:
-  contents: write # Important: Allows this workflow to commit code to your repo
+  contents: write
 
 jobs:
   bootstrap-project:
@@ -31,29 +31,33 @@ jobs:
 
       - name: Create React Native App
         run: |
-          # Initialize the app in a subfolder
+          # Initialize in subfolder
           npx --yes @react-native-community/cli init SageTools --package-name com.sage.tools --skip-install
           
-          # Move files to root so they aren't stuck inside a "SageTools" folder
+          # 1. DELETE the nested git folder (Fixes the error)
+          rm -rf SageTools/.git
+          
+          # 2. Move all visible files
           mv SageTools/* .
-          mv SageTools/.* . || true
+          
+          # 3. Move hidden files (like .gitignore) carefully
+          # The "|| true" prevents the script from crashing if it complains about '.' or '..'
+          mv SageTools/.[!.]* . || true
+          
+          # 4. Remove the empty folder
           rmdir SageTools
 
       - name: Update Display Name
         run: |
-          # Change "SageTools" to "Sage Tools" in app.json
           sed -i 's/"displayName": "SageTools"/"displayName": "Sage Tools"/' app.json
 
       - name: Generate Signing Key
         run: |
-          # Generate a keystore file directly in the android/app folder
           cd android/app
           keytool -genkeypair -v -storetype PKCS12 -keystore release.keystore -alias sage-key -keyalg RSA -keysize 2048 -validity 10000 -storepass sage123 -keypass sage123 -dname "CN=Sage Tools, OU=Mobile, O=Sage, L=City, ST=State, C=US"
 
       - name: Configure Gradle for Signing
         run: |
-          # TRICK: We replace the default debug keystore config with our new release keystore
-          # This ensures the default release build works without complex editing
           cd android/app
           sed -i 's/debug.keystore/release.keystore/' build.gradle
           sed -i 's/androiddebugkey/sage-key/' build.gradle
@@ -62,7 +66,6 @@ jobs:
 
       - name: Create Build Workflow
         run: |
-          # Create the permanent build workflow file
           mkdir -p .github/workflows
           cat <<EOF > .github/workflows/build_apk.yml
           name: Build APK
