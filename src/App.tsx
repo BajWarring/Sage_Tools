@@ -1,138 +1,94 @@
 import React, { useState } from 'react';
-import { 
-  SafeAreaView, 
-  StatusBar, 
-  View, 
-  StyleSheet, 
-  TouchableOpacity, 
-  Text 
-} from 'react-native';
+import { SafeAreaView, StatusBar, View, StyleSheet, TouchableOpacity, Text } from 'react-native';
 
-// 1. Imports based on your structure
+// Imports
 import { themes } from './theme/themes'; 
 import DashboardTab from './tabs/DashboardTab';
 import SettingsTab from './tabs/SettingsTab';
-import Sheets from './components/Sheets';
+import Sheets from './components/Sheets'; // You will need to create this next
 import MD3Icon from './components/MD3Icon';
 
-// Define available tabs
-type TabName = 'dashboard' | 'settings';
-
 const App = () => {
-  // --- STATE MANAGEMENT ---
-  const [activeTab, setActiveTab] = useState<TabName>('dashboard');
-  const [activeThemeId, setActiveThemeId] = useState<string>('sakura'); // Default theme
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeThemeId, setActiveThemeId] = useState('sakura'); 
   const [isSheetVisible, setSheetVisible] = useState(false);
-  const [sheetType, setSheetType] = useState<'tools' | 'storage'>('tools');
+  const [sheetType, setSheetType] = useState('tools');
+  const [selectedToolId, setSelectedToolId] = useState('');
 
-  // Load current theme colors
-  // Assuming themes export looks like: { sakura: { primary: '...', background: '...' } }
+  // Get current theme object
   const theme = themes[activeThemeId as keyof typeof themes];
 
-  // --- HANDLERS ---
-  const handleOpenSheet = (type: 'tools' | 'storage') => {
-    setSheetType(type);
+  const handleOpenTool = (toolId: string) => {
+    setSelectedToolId(toolId);
+    setSheetType('tools');
     setSheetVisible(true);
   };
 
-  const handleCloseSheet = () => {
-    setSheetVisible(false);
-  };
-
-  // --- RENDERERS ---
-  
-  // Decides which Tab component to show
-  const renderContent = () => {
-    if (activeTab === 'dashboard') {
-      return (
-        <DashboardTab 
-          theme={theme} 
-          onOpenTools={() => handleOpenSheet('tools')} 
-        />
-      );
-    }
-    return (
-      <SettingsTab 
-        theme={theme} 
-        currentThemeId={activeThemeId} 
-        onChangeTheme={setActiveThemeId} 
-      />
-    );
+  const handleOpenStorage = () => {
+    setSheetType('storage');
+    setSheetVisible(true);
   };
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
-      <StatusBar 
-        barStyle="dark-content" 
-        backgroundColor={theme.background} 
-      />
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.surface }]}>
+      <StatusBar barStyle="dark-content" backgroundColor={theme.surface} />
 
-      {/* 1. Main Content Area */}
-      <View style={styles.contentContainer}>
-        {renderContent()}
+      {/* Main Content */}
+      <View style={{ flex: 1 }}>
+        {activeTab === 'dashboard' ? (
+          <DashboardTab theme={theme} onOpenTools={handleOpenTool} />
+        ) : (
+          <SettingsTab 
+            theme={theme} 
+            currentThemeId={activeThemeId} 
+            onChangeTheme={setActiveThemeId} 
+            onOpenStorage={handleOpenStorage}
+          />
+        )}
       </View>
 
-      {/* 2. Custom Bottom Navigation Bar */}
-      <View style={[styles.navBar, { backgroundColor: theme.surface, borderTopColor: theme.outlineVariant }]}>
-        
-        {/* Dashboard Tab Button */}
+      {/* Navigation Bar (Matches your HTML nav) */}
+      <View style={[styles.navBar, { backgroundColor: theme.surfaceContainer, borderTopColor: theme.outlineVariant }]}>
         <TouchableOpacity 
-          style={styles.navItem} 
+          style={[styles.navItem, activeTab === 'dashboard' && styles.navItemActive]} 
           onPress={() => setActiveTab('dashboard')}
         >
-          <MD3Icon 
-            name={activeTab === 'dashboard' ? 'view-dashboard' : 'view-dashboard-outline'} 
-            size={24} 
-            color={activeTab === 'dashboard' ? theme.primary : theme.onSurfaceVariant} 
-          />
-          <Text style={{ 
-            color: activeTab === 'dashboard' ? theme.primary : theme.onSurfaceVariant,
-            fontSize: 12,
-            marginTop: 4,
-            fontWeight: activeTab === 'dashboard' ? 'bold' : 'normal'
-          }}>
-            Home
-          </Text>
+          <View style={[styles.navIndicator, activeTab === 'dashboard' && { backgroundColor: theme.secondaryContainer }]}>
+            <MD3Icon name={activeTab === 'dashboard' ? 'view-dashboard' : 'view-dashboard-outline'} 
+                     size={24} 
+                     color={activeTab === 'dashboard' ? theme.onSecondaryContainer : theme.onSurfaceVariant} />
+          </View>
+          <Text style={[styles.navLabel, { color: theme.onSurface }]}>Dashboard</Text>
         </TouchableOpacity>
 
-        {/* Central Action Button (Optional - e.g., Quick Add or Open Tools) */}
         <TouchableOpacity 
-          style={[styles.fab, { backgroundColor: theme.primaryContainer }]}
-          onPress={() => handleOpenSheet('tools')}
-        >
-           <MD3Icon name="plus" size={28} color={theme.onPrimaryContainer} />
-        </TouchableOpacity>
-
-        {/* Settings Tab Button */}
-        <TouchableOpacity 
-          style={styles.navItem} 
+          style={[styles.navItem, activeTab === 'settings' && styles.navItemActive]} 
           onPress={() => setActiveTab('settings')}
         >
-          <MD3Icon 
-            name={activeTab === 'settings' ? 'cog' : 'cog-outline'} 
-            size={24} 
-            color={activeTab === 'settings' ? theme.primary : theme.onSurfaceVariant} 
-          />
-          <Text style={{ 
-            color: activeTab === 'settings' ? theme.primary : theme.onSurfaceVariant,
-            fontSize: 12,
-            marginTop: 4,
-            fontWeight: activeTab === 'settings' ? 'bold' : 'normal'
-          }}>
-            Settings
-          </Text>
+           <View style={[styles.navIndicator, activeTab === 'settings' && { backgroundColor: theme.secondaryContainer }]}>
+            <MD3Icon name={activeTab === 'settings' ? 'cog' : 'cog-outline'} 
+                     size={24} 
+                     color={activeTab === 'settings' ? theme.onSecondaryContainer : theme.onSurfaceVariant} />
+          </View>
+          <Text style={[styles.navLabel, { color: theme.onSurface }]}>Settings</Text>
         </TouchableOpacity>
       </View>
 
-      {/* 3. Global Sheets Overlay */}
-      {/* This sits on top of everything when visible */}
+      {/* Sheets Overlay (Placeholder for now) */}
       {isSheetVisible && (
-        <Sheets 
-          visible={isSheetVisible}
-          type={sheetType}
-          theme={theme}
-          onClose={handleCloseSheet}
-        />
+        <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.5)' }]}>
+           {/* You can implement the modal logic here or in Sheets.tsx later */}
+           <TouchableOpacity style={{flex:1}} onPress={() => setSheetVisible(false)} />
+           <View style={{ height: '50%', backgroundColor: theme.surfaceContainer, borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 20 }}>
+              <Text style={{fontSize: 20, color: theme.onSurface}}>
+                {sheetType === 'tools' ? 'Tool Details' : 'Select Storage'}
+              </Text>
+              {/* Simplified content */}
+              <TouchableOpacity onPress={() => setSheetVisible(false)} style={{marginTop:20}}>
+                <Text style={{color: theme.primary}}>Close</Text>
+              </TouchableOpacity>
+           </View>
+        </View>
       )}
 
     </SafeAreaView>
@@ -140,43 +96,19 @@ const App = () => {
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  contentContainer: {
-    flex: 1, // Takes up all space above the navbar
-  },
+  container: { flex: 1 },
   navBar: {
-    flexDirection: 'row',
     height: 80,
-    borderTopWidth: 1,
-    alignItems: 'center',
+    flexDirection: 'row',
     justifyContent: 'space-around',
-    paddingBottom: 20, // Padding for iOS Home Indicator
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  navItem: {
     alignItems: 'center',
-    justifyContent: 'center',
-    width: 60,
+    borderTopWidth: 1,
+    paddingBottom: 10
   },
-  fab: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    justifyContent: 'center',
-    alignItems: 'center',
-    top: -20, // Moves it slightly above the navbar
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-  }
+  navItem: { alignItems: 'center', width: 64 },
+  navIndicator: { width: 64, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
+  navLabel: { fontSize: 12, fontWeight: '600' },
+  overlay: { position: 'absolute', inset: 0, justifyContent: 'flex-end', zIndex: 100 }
 });
 
 export default App;
