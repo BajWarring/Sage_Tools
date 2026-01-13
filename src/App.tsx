@@ -5,7 +5,7 @@ import { SafeAreaView, StatusBar, View, StyleSheet, TouchableOpacity, Text } fro
 import { themes } from './theme/themes'; 
 import DashboardTab from './tabs/DashboardTab';
 import SettingsTab from './tabs/SettingsTab';
-import Sheets from './components/Sheets'; // You will need to create this next
+import Sheets from './components/Sheets'; 
 import MD3Icon from './components/MD3Icon';
 
 const App = () => {
@@ -47,7 +47,7 @@ const App = () => {
         )}
       </View>
 
-      {/* Navigation Bar (Matches your HTML nav) */}
+      {/* Navigation Bar */}
       <View style={[styles.navBar, { backgroundColor: theme.surfaceContainer, borderTopColor: theme.outlineVariant }]}>
         <TouchableOpacity 
           style={[styles.navItem, activeTab === 'dashboard' && styles.navItemActive]} 
@@ -74,21 +74,14 @@ const App = () => {
         </TouchableOpacity>
       </View>
 
-      {/* Sheets Overlay (Placeholder for now) */}
+      {/* Actual Sheets Component - This was missing before! */}
       {isSheetVisible && (
-        <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.5)' }]}>
-           {/* You can implement the modal logic here or in Sheets.tsx later */}
-           <TouchableOpacity style={{flex:1}} onPress={() => setSheetVisible(false)} />
-           <View style={{ height: '50%', backgroundColor: theme.surfaceContainer, borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 20 }}>
-              <Text style={{fontSize: 20, color: theme.onSurface}}>
-                {sheetType === 'tools' ? 'Tool Details' : 'Select Storage'}
-              </Text>
-              {/* Simplified content */}
-              <TouchableOpacity onPress={() => setSheetVisible(false)} style={{marginTop:20}}>
-                <Text style={{color: theme.primary}}>Close</Text>
-              </TouchableOpacity>
-           </View>
-        </View>
+        <Sheets 
+          visible={isSheetVisible}
+          type={sheetType} // This passes 'tools' or 'storage'
+          theme={theme}
+          onClose={() => setSheetVisible(false)}
+        />
       )}
 
     </SafeAreaView>
@@ -106,9 +99,9 @@ const styles = StyleSheet.create({
     paddingBottom: 10
   },
   navItem: { alignItems: 'center', width: 64 },
+  navItemActive: {},
   navIndicator: { width: 64, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
-  navLabel: { fontSize: 12, fontWeight: '600' },
-  overlay: { position: 'absolute', inset: 0, justifyContent: 'flex-end', zIndex: 100 }
+  navLabel: { fontSize: 12, fontWeight: '600' }
 });
 
 export default App;
