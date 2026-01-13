@@ -1,1 +1,448 @@
+name: Refactor Folder Structure
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refactor-structure:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "Sage Bot"
+          git config --global user.email "bot@sage.tools"
+
+      - name: Create Directories
+        run: mkdir -p src/theme src/data src/components src/tabs
+
+      # --- 1. THEMES ---
+      - name: Create src/theme/themes.ts
+        run: |
+          cat <<EOF > src/theme/themes.ts
+          export const THEMES = {
+            sakura: {
+              primary: '#984061', onPrimary: '#ffffff', primaryContainer: '#ffd9e2', onPrimaryContainer: '#3e001d',
+              secondary: '#74565f', secondaryContainer: '#ffd9e2', onSecondaryContainer: '#2b151c',
+              surface: '#fff8f8', surfaceContainer: '#fceaea', surfaceContainerHigh: '#fff0f3',
+              onSurface: '#201a1b', onSurfaceVariant: '#514347', outline: '#837377', outlineVariant: '#d5c2c6',
+            },
+            lavender: {
+              primary: '#6750a4', onPrimary: '#ffffff', primaryContainer: '#eaddff', onPrimaryContainer: '#21005d',
+              secondary: '#625b71', secondaryContainer: '#e8def8', onSecondaryContainer: '#1d192b',
+              surface: '#fff7fe', surfaceContainer: '#f3eefc', surfaceContainerHigh: '#f7f2fa',
+              onSurface: '#1c1b1f', onSurfaceVariant: '#49454f', outline: '#79747e', outlineVariant: '#cac4d0',
+            },
+            mint: {
+              primary: '#006c4c', onPrimary: '#ffffff', primaryContainer: '#89f8c7', onPrimaryContainer: '#002114',
+              secondary: '#4c6358', secondaryContainer: '#cee9da', onSecondaryContainer: '#092016',
+              surface: '#fbfdf9', surfaceContainer: '#edf5ef', surfaceContainerHigh: '#e7f0eb',
+              onSurface: '#191c1a', onSurfaceVariant: '#404944', outline: '#707974', outlineVariant: '#bfc9c2',
+            },
+            ocean: {
+              primary: '#006492', onPrimary: '#ffffff', primaryContainer: '#cae6ff', onPrimaryContainer: '#001e30',
+              secondary: '#50606e', secondaryContainer: '#d3e4f5', onSecondaryContainer: '#0c1d29',
+              surface: '#f8fdff', surfaceContainer: '#eaf2f8', surfaceContainerHigh: '#e4eff5',
+              onSurface: '#191c1e', onSurfaceVariant: '#42474e', outline: '#72777f', outlineVariant: '#c2c7cf',
+            },
+          };
+          EOF
+
+      # --- 2. DATA ---
+      - name: Create src/data/appData.ts
+        run: |
+          cat <<EOF > src/data/appData.ts
+          export const TOOLS = [
+            { id: 'pdf', title: 'PDF Tools', icon: '📄', count: 6, items: ['Merge', 'Split', 'Sign', 'Compress', 'OCR'] },
+            { id: 'img', title: 'Image Editor', icon: '📸', count: 5, items: ['Resize', 'Crop', 'Filter', 'Convert', 'Markup'] },
+            { id: 'vid', title: 'Video Studio', icon: '🎬', count: 4, items: ['Trim', 'Audio', 'Speed', 'Mute'] },
+            { id: 'util', title: 'Utilities', icon: '🛠️', count: 8, items: ['QR Gen', 'Scanner', 'Units', 'Time', 'Text'] }
+          ];
+
+          export const FILES = [
+            { name: 'Invoice_2026.pdf', date: '2h ago', size: '1.2MB', icon: '📄' },
+            { name: 'Trip_Vlog.mp4', date: 'Yesterday', size: '142MB', icon: '🎥' },
+            { name: 'Avatar.png', date: 'Oct 24', size: '2.8MB', icon: '🖼️' },
+            { name: 'Notes.txt', date: 'Oct 22', size: '12KB', icon: '📝' }
+          ];
+          EOF
+
+      # --- 3. COMPONENTS ---
+      - name: Create src/components/MD3Icon.tsx
+        run: |
+          cat <<EOF > src/components/MD3Icon.tsx
+          import React from 'react';
+          import { Text } from 'react-native';
+
+          type Props = { symbol: string; size?: number; color: string };
+
+          export const MD3Icon = ({ symbol, size = 24, color }: Props) => (
+            <Text style={{ fontSize: size, color: color, textAlign: 'center', lineHeight: size }}>
+              {symbol}
+            </Text>
+          );
+          EOF
+
+      # --- 4. DASHBOARD TAB ---
+      - name: Create src/tabs/DashboardTab.tsx
+        run: |
+          cat <<EOF > src/tabs/DashboardTab.tsx
+          import React from 'react';
+          import { ScrollView, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+          import { MD3Icon } from '../components/MD3Icon';
+          import { TOOLS, FILES } from '../data/appData';
+
+          export const DashboardTab = ({ theme: C, onToolPress }: any) => (
+            <ScrollView contentContainerStyle={{ paddingBottom: 100, paddingTop: 8 }} showsVerticalScrollIndicator={false}>
+              {/* Resume Section */}
+              <View style={styles.sectionBox}>
+                <Text style={[styles.title, { color: C.onSurfaceVariant }]}>Continue Editing</Text>
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+                {FILES.slice(0, 3).map((f: any, i: number) => (
+                  <TouchableOpacity key={i} activeOpacity={0.7} style={[styles.resumeCard, { backgroundColor: C.surfaceContainer }]}>
+                    <View style={styles.rowBetween}>
+                      <MD3Icon symbol="⏱️" size={18} color={C.primary} />
+                      <Text style={[styles.tag, { color: C.onSurfaceVariant }]}>RESUME</Text>
+                    </View>
+                    <View>
+                      <Text numberOfLines={1} style={[styles.name, { color: C.onSurface }]}>{f.name}</Text>
+                      <Text style={[styles.meta, { color: C.onSurfaceVariant }]}>Edited {f.date}</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+
+              {/* Tools Grid */}
+              <View style={styles.sectionBox}>
+                <Text style={[styles.title, { color: C.onSurfaceVariant }]}>Tools</Text>
+              </View>
+              <View style={styles.grid}>
+                {TOOLS.map((tool: any) => (
+                  <TouchableOpacity key={tool.id} onPress={() => onToolPress(tool)} style={[styles.toolCard, { backgroundColor: C.surfaceContainerHigh }]}>
+                    <View style={styles.rowTop}>
+                      <View style={[styles.iconBox, { backgroundColor: C.primaryContainer }]}>
+                        <MD3Icon symbol={tool.icon} size={22} color={C.onPrimaryContainer} />
+                      </View>
+                      <View style={[styles.badge, { backgroundColor: C.surfaceContainer }]}>
+                        <Text style={[styles.count, { color: C.onSurfaceVariant }]}>{tool.count}</Text>
+                      </View>
+                    </View>
+                    <View>
+                      <Text style={[styles.toolTitle, { color: C.onSurface }]}>{tool.title}</Text>
+                      <Text style={[styles.meta, { color: C.onSurfaceVariant }]}>Tap to open</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Files List */}
+              <View style={[styles.sectionBox, styles.rowBetween, { paddingRight: 16 }]}>
+                <Text style={[styles.title, { color: C.onSurfaceVariant }]}>Saved Files</Text>
+                <Text style={{ color: C.primary, fontWeight: '600' }}>View All</Text>
+              </View>
+              <View style={{ paddingHorizontal: 16 }}>
+                {FILES.map((f: any, i: number) => (
+                  <TouchableOpacity key={i} style={[styles.fileRow, { backgroundColor: C.surfaceContainer }]}>
+                    <View style={[styles.fileIcon, { backgroundColor: C.secondaryContainer }]}>
+                      <MD3Icon symbol={f.icon} size={20} color={C.onSecondaryContainer} />
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 16 }}>
+                      <Text style={[styles.name, { color: C.onSurface }]}>{f.name}</Text>
+                      <Text style={[styles.meta, { color: C.onSurfaceVariant }]}>{f.size} • {f.date}</Text>
+                    </View>
+                    <MD3Icon symbol="⋮" color={C.onSurfaceVariant} />
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+          );
+
+          const styles = StyleSheet.create({
+            sectionBox: { paddingHorizontal: 20, marginBottom: 12, marginTop: 24 },
+            title: { fontSize: 14, fontWeight: '500' },
+            resumeCard: { width: 150, height: 85, marginRight: 12, borderRadius: 16, padding: 12, justifyContent: 'space-between' },
+            rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+            rowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+            tag: { fontSize: 10, fontWeight: 'bold' },
+            name: { fontSize: 13, fontWeight: '500' },
+            meta: { fontSize: 11 },
+            grid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 16, gap: 12 },
+            toolCard: { width: '48%', height: 140, borderRadius: 24, padding: 16, justifyContent: 'space-between' },
+            iconBox: { width: 48, height: 48, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+            badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
+            count: { fontSize: 12, fontWeight: 'bold' },
+            toolTitle: { fontSize: 16, fontWeight: '500', marginBottom: 2 },
+            fileRow: { flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 16, marginBottom: 8 },
+            fileIcon: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+          });
+          EOF
+
+      # --- 5. SETTINGS TAB ---
+      - name: Create src/tabs/SettingsTab.tsx
+        run: |
+          cat <<EOF > src/tabs/SettingsTab.tsx
+          import React from 'react';
+          import { ScrollView, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+          import { MD3Icon } from '../components/MD3Icon';
+
+          export const SettingsTab = ({ theme: C, themeName, onThemePress, storagePath, onStoragePress }: any) => (
+            <ScrollView contentContainerStyle={{ paddingBottom: 100, paddingTop: 8 }} showsVerticalScrollIndicator={false}>
+              <View style={[styles.group, { backgroundColor: C.surfaceContainerHigh }]}>
+                <TouchableOpacity onPress={onThemePress} style={[styles.row, { borderBottomWidth: 1, borderBottomColor: C.outlineVariant }]}>
+                  <MD3Icon symbol="🎨" size={24} color={C.primary} />
+                  <View style={styles.textCtx}>
+                    <Text style={[styles.head, { color: C.onSurface }]}>Theme</Text>
+                    <Text style={[styles.sub, { color: C.onSurfaceVariant }]}>{themeName}</Text>
+                  </View>
+                  <MD3Icon symbol="›" color={C.onSurfaceVariant} />
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.row}>
+                  <MD3Icon symbol="🌐" size={24} color={C.onSurfaceVariant} />
+                  <View style={styles.textCtx}>
+                    <Text style={[styles.head, { color: C.onSurface }]}>Language</Text>
+                    <Text style={[styles.sub, { color: C.onSurfaceVariant }]}>English (US)</Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={[styles.header, { color: C.primary }]}>Data & Storage</Text>
+              <View style={[styles.group, { backgroundColor: C.surfaceContainerHigh }]}>
+                <TouchableOpacity onPress={onStoragePress} style={styles.row}>
+                  <MD3Icon symbol="📁" size={24} color={C.onSurfaceVariant} />
+                  <View style={styles.textCtx}>
+                    <Text style={[styles.head, { color: C.onSurface }]}>Storage Location</Text>
+                    <Text style={[styles.sub, { color: C.onSurfaceVariant }]}>{storagePath}</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.row}>
+                  <MD3Icon symbol="🗑️" size={24} color={C.onSurfaceVariant} />
+                  <View style={styles.textCtx}>
+                    <Text style={[styles.head, { color: C.onSurface }]}>Clear Cache</Text>
+                    <Text style={[styles.sub, { color: C.onSurfaceVariant }]}>14 MB</Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={[styles.header, { color: C.primary }]}>About</Text>
+              <View style={[styles.group, { backgroundColor: C.surfaceContainerHigh }]}>
+                <TouchableOpacity style={styles.row}>
+                  <MD3Icon symbol="ℹ️" size={24} color={C.onSurfaceVariant} />
+                  <View style={styles.textCtx}>
+                    <Text style={[styles.head, { color: C.onSurface }]}>Version</Text>
+                    <Text style={[styles.sub, { color: C.onSurfaceVariant }]}>7.1.0 (Native)</Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          );
+
+          const styles = StyleSheet.create({
+            group: { marginHorizontal: 16, borderRadius: 24, overflow: 'hidden', marginBottom: 16 },
+            row: { flexDirection: 'row', alignItems: 'center', padding: 16 },
+            textCtx: { flex: 1, marginLeft: 16 },
+            head: { fontSize: 16, marginBottom: 2 },
+            sub: { fontSize: 14 },
+            header: { fontSize: 14, fontWeight: '500', marginLeft: 32, marginBottom: 8, marginTop: 8 },
+          });
+          EOF
+
+      # --- 6. MAIN APP ---
+      - name: Create Clean App.tsx
+        run: |
+          cat <<EOF > App.tsx
+          import React, { useState, useRef } from 'react';
+          import { SafeAreaView, StatusBar, View, Text, TouchableOpacity, Modal, Animated, StyleSheet, Dimensions, TouchableWithoutFeedback } from 'react-native';
+          import { THEMES } from './src/theme/themes';
+          import { DashboardTab } from './src/tabs/DashboardTab';
+          import { SettingsTab } from './src/tabs/SettingsTab';
+          import { MD3Icon } from './src/components/MD3Icon';
+
+          const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
+
+          export default function App() {
+            const [themeName, setThemeName] = useState<keyof typeof THEMES>('sakura');
+            const C = THEMES[themeName];
+            const [activeTab, setActiveTab] = useState('dashboard');
+            
+            // Modal States
+            const [modalType, setModalType] = useState<'none'|'tool'|'storage'|'theme'>('none');
+            const [selectedTool, setSelectedTool] = useState<any>(null);
+            const [storagePath, setStoragePath] = useState('/Internal/SageTools');
+
+            // Animations
+            const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+            const themeSlideAnim = useRef(new Animated.Value(SCREEN_WIDTH)).current;
+            const fadeAnim = useRef(new Animated.Value(0)).current;
+
+            const openModal = (type: 'tool'|'storage') => {
+              setModalType(type);
+              Animated.parallel([
+                Animated.timing(fadeAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
+                Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, bounciness: 0 })
+              ]).start();
+            };
+
+            const closeModal = () => {
+              Animated.parallel([
+                Animated.timing(fadeAnim, { toValue: 0, duration: 200, useNativeDriver: true }),
+                Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 250, useNativeDriver: true })
+              ]).start(() => setModalType('none'));
+            };
+
+            const openThemePage = () => {
+              setModalType('theme');
+              Animated.timing(themeSlideAnim, { toValue: 0, duration: 300, useNativeDriver: true }).start();
+            };
+
+            const closeThemePage = () => {
+              Animated.timing(themeSlideAnim, { toValue: SCREEN_WIDTH, duration: 250, useNativeDriver: true }).start(() => setModalType('none'));
+            };
+
+            return (
+              <SafeAreaView style={{ flex: 1, backgroundColor: C.surface }}>
+                <StatusBar barStyle="dark-content" backgroundColor={C.surface} />
+
+                {/* Header */}
+                <View style={[styles.header, { backgroundColor: C.surface }]}>
+                  <Text style={{ fontSize: 22, color: C.onSurface, marginLeft: 8 }}>Sage Tools</Text>
+                  <View style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' }}>
+                    <MD3Icon symbol="👤" size={28} color={C.onSurfaceVariant} />
+                  </View>
+                </View>
+
+                {/* Tab Content */}
+                {activeTab === 'dashboard' ? (
+                  <DashboardTab theme={C} onToolPress={(t: any) => { setSelectedTool(t); openModal('tool'); }} />
+                ) : (
+                  <SettingsTab 
+                    theme={C} 
+                    themeName={themeName.toUpperCase()} 
+                    onThemePress={openThemePage} 
+                    storagePath={storagePath}
+                    onStoragePress={() => openModal('storage')}
+                  />
+                )}
+
+                {/* Bottom Nav */}
+                <View style={[styles.nav, { backgroundColor: C.surfaceContainer, borderTopColor: C.outlineVariant + '20' }]}>
+                  <TouchableOpacity onPress={() => setActiveTab('dashboard')} style={{ alignItems: 'center', width: 80 }}>
+                    <View style={[styles.pill, activeTab === 'dashboard' && { backgroundColor: C.secondaryContainer }]}>
+                      <MD3Icon symbol="🗂️" color={activeTab === 'dashboard' ? C.onSecondaryContainer : C.onSurfaceVariant} />
+                    </View>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: activeTab === 'dashboard' ? C.onSurface : C.onSurfaceVariant }}>Dashboard</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity onPress={() => setActiveTab('settings')} style={{ alignItems: 'center', width: 80 }}>
+                    <View style={[styles.pill, activeTab === 'settings' && { backgroundColor: C.secondaryContainer }]}>
+                      <MD3Icon symbol="⚙️" color={activeTab === 'settings' ? C.onSecondaryContainer : C.onSurfaceVariant} />
+                    </View>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: activeTab === 'settings' ? C.onSurface : C.onSurfaceVariant }}>Settings</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Modal Backdrop */}
+                {(modalType === 'tool' || modalType === 'storage') && (
+                  <TouchableWithoutFeedback onPress={closeModal}>
+                    <Animated.View style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', opacity: fadeAnim }} />
+                  </TouchableWithoutFeedback>
+                )}
+
+                {/* Bottom Sheet */}
+                <Animated.View style={[styles.sheet, { backgroundColor: C.surfaceContainer, transform: [{ translateY: slideAnim }] }]}>
+                  <View style={{ width: 32, height: 4, backgroundColor: '#79747e', opacity: 0.4, borderRadius: 2, alignSelf: 'center', marginTop: 16, marginBottom: 24 }} />
+                  
+                  {modalType === 'tool' && selectedTool && (
+                    <View style={{ padding: 24, paddingTop: 0 }}>
+                       <View style={{ alignItems: 'center', marginBottom: 24 }}>
+                          <View style={{ width: 64, height: 64, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: C.primaryContainer }}>
+                            <MD3Icon symbol={selectedTool.icon} size={32} color={C.onPrimaryContainer} />
+                          </View>
+                          <Text style={{ fontSize: 22, marginTop: 8, color: C.onSurface }}>{selectedTool.title}</Text>
+                       </View>
+                       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+                          {selectedTool.items.map((item: string, i: number) => (
+                            <View key={i} style={{ width: '31%', aspectRatio: 1, borderRadius: 16, alignItems: 'center', justifyContent: 'center', padding: 8, backgroundColor: C.surfaceContainerHigh }}>
+                              <MD3Icon symbol="🧩" size={24} color={C.primary} />
+                              <Text style={{ fontSize: 11, textAlign: 'center', marginTop: 8, color: C.onSurface }}>{item}</Text>
+                            </View>
+                          ))}
+                       </View>
+                    </View>
+                  )}
+
+                  {modalType === 'storage' && (
+                    <View style={{ padding: 24, paddingTop: 0 }}>
+                      <View style={{ alignItems: 'center', marginBottom: 24 }}>
+                        <MD3Icon symbol="📂" size={40} color={C.primary} />
+                        <Text style={{ fontSize: 22, marginTop: 8, color: C.onSurface }}>Select Storage</Text>
+                      </View>
+                      <TouchableOpacity onPress={() => { setStoragePath('/Internal/SageTools'); closeModal(); }} style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderRadius: 24, backgroundColor: C.secondaryContainer }}>
+                        <MD3Icon symbol="⭐" color={C.onSecondaryContainer} />
+                        <View style={{ flex: 1, marginLeft: 16 }}>
+                           <Text style={{ fontWeight: '600', color: C.onSecondaryContainer }}>SageTools Default</Text>
+                           <Text style={{ fontSize: 12, opacity: 0.7, color: C.onSecondaryContainer }}>Recommended</Text>
+                        </View>
+                        <MD3Icon symbol="✅" color={C.onSecondaryContainer} />
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => { setStoragePath('/Internal/Downloads'); closeModal(); }} style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderRadius: 24, borderColor: C.outlineVariant, borderWidth: 1, marginTop: 12 }}>
+                        <MD3Icon symbol="📥" color={C.onSurfaceVariant} />
+                        <View style={{ flex: 1, marginLeft: 16 }}>
+                           <Text style={{ fontWeight: '600', color: C.onSurfaceVariant }}>Downloads Folder</Text>
+                        </View>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </Animated.View>
+
+                {/* Theme Page */}
+                {modalType === 'theme' && (
+                  <Animated.View style={{ position: 'absolute', inset: 0, zIndex: 50, backgroundColor: C.surface, transform: [{ translateX: themeSlideAnim }] }}>
+                    <View style={[styles.header, { borderBottomWidth: 1, borderBottomColor: C.outlineVariant }]}>
+                       <TouchableOpacity onPress={closeThemePage} style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }}>
+                          <MD3Icon symbol="⬅️" size={24} color={C.onSurface} />
+                       </TouchableOpacity>
+                       <Text style={{ fontSize: 22, marginLeft: 0, color: C.onSurface }}>Appearance</Text>
+                    </View>
+                    <View style={{ padding: 24, flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+                        {Object.keys(THEMES).map((k) => {
+                           const t = (THEMES as any)[k];
+                           const isActive = themeName === k;
+                           return (
+                              <TouchableOpacity key={k} onPress={() => setThemeName(k as any)} style={{ width: '48%', aspectRatio: 0.6, borderRadius: 16, overflow: 'hidden', borderWidth: 2, marginBottom: 12, borderColor: isActive ? t.primary : 'transparent', backgroundColor: t.surfaceContainerHigh }}>
+                                  <View style={{ height: 40, backgroundColor: t.primaryContainer }} />
+                                  <View style={{ padding: 10, gap: 4 }}>
+                                     <View style={{ width: 40, height: 8, borderRadius: 4, backgroundColor: t.secondary }} />
+                                     <View style={{ width: 20, height: 8, borderRadius: 4, backgroundColor: t.outline }} />
+                                  </View>
+                                  <Text style={{ position: 'absolute', bottom: 0, width: '100%', textAlign: 'center', fontSize: 10, fontWeight: 'bold', backgroundColor: 'rgba(0,0,0,0.05)', paddingVertical: 4, color: t.onSurface }}>{k.toUpperCase()}</Text>
+                                  {isActive && <View style={{ position: 'absolute', bottom: 8, right: 8, width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: t.primary }}><MD3Icon symbol="✅" size={12} color={t.onPrimary} /></View>}
+                              </TouchableOpacity>
+                           )
+                        })}
+                    </View>
+                  </Animated.View>
+                )}
+              </SafeAreaView>
+            );
+          }
+
+          const styles = StyleSheet.create({
+            header: { height: 64, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, justifyContent: 'space-between' },
+            nav: { position: 'absolute', bottom: 0, width: '100%', height: 80, flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', paddingBottom: 16, borderTopWidth: 1 },
+            pill: { width: 64, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
+            sheet: { position: 'absolute', bottom: 0, width: '100%', borderTopLeftRadius: 28, borderTopRightRadius: 28, zIndex: 20, paddingBottom: 20, maxHeight: '85%' },
+          });
+          EOF
+
+      - name: Commit Changes
+        run: |
+          git add .
+          git commit -m "Refactor: Split App.tsx into src/ modules"
+          git push
 
