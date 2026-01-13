@@ -1,10 +1,15 @@
 import React from 'react';
-import { Text } from 'react-native';
+// Check which library you have installed. Usually it's this:
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
-type Props = { symbol: string; size?: number; color: string };
+interface IconProps {
+  name: string;
+  size?: number;
+  color?: string;
+}
 
-export const MD3Icon = ({ symbol, size = 24, color }: Props) => (
-  <Text style={{ fontSize: size, color: color, textAlign: 'center', lineHeight: size }}>
-    {symbol}
-  </Text>
-);
+const MD3Icon: React.FC<IconProps> = ({ name, size = 24, color = '#000' }) => {
+  return <Icon name={name} size={size} color={color} />;
+};
+
+export default MD3Icon;
