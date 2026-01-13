@@ -1,89 +1,187 @@
 import React from 'react';
-import { ScrollView, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { MD3Icon } from '../components/MD3Icon';
-import { TOOLS, FILES } from '../data/appData';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import MD3Icon from '../components/MD3Icon';
 
-export const DashboardTab = ({ theme: C, onToolPress }: any) => (
-  <ScrollView contentContainerStyle={{ paddingBottom: 100, paddingTop: 8 }} showsVerticalScrollIndicator={false}>
-    {/* Resume Section */}
-    <View style={styles.sectionBox}>
-      <Text style={[styles.title, { color: C.onSurfaceVariant }]}>Continue Editing</Text>
-    </View>
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 12 }}>
-      {FILES.slice(0, 3).map((f: any, i: number) => (
-        <TouchableOpacity key={i} activeOpacity={0.7} style={[styles.resumeCard, { backgroundColor: C.surfaceContainer }]}>
-          <View style={styles.rowBetween}>
-            <MD3Icon symbol="⏱️" size={18} color={C.primary} />
-            <Text style={[styles.tag, { color: C.onSurfaceVariant }]}>RESUME</Text>
-          </View>
-          <View>
-            <Text numberOfLines={1} style={[styles.name, { color: C.onSurface }]}>{f.name}</Text>
-            <Text style={[styles.meta, { color: C.onSurfaceVariant }]}>Edited {f.date}</Text>
-          </View>
+// Define the Theme type (simplified based on your usage)
+interface Theme {
+  primary: string;
+  onPrimary: string;
+  primaryContainer: string;
+  onPrimaryContainer: string;
+  background: string;
+  surface: string;
+  surfaceVariant: string;
+  onSurface: string;
+  onSurfaceVariant: string;
+  outline: string;
+}
+
+interface DashboardTabProps {
+  theme: Theme;
+  onOpenTools: () => void;
+}
+
+const DashboardTab: React.FC<DashboardTabProps> = ({ theme, onOpenTools }) => {
+  return (
+    <ScrollView 
+      style={[styles.container, { backgroundColor: theme.background }]}
+      contentContainerStyle={styles.contentContainer}
+    >
+      {/* Header Section */}
+      <View style={styles.header}>
+        <View>
+          <Text style={[styles.greeting, { color: theme.onSurfaceVariant }]}>Welcome back,</Text>
+          <Text style={[styles.title, { color: theme.onSurface }]}>Dashboard</Text>
+        </View>
+        <TouchableOpacity style={[styles.profileButton, { backgroundColor: theme.surfaceVariant }]}>
+           <MD3Icon name="account" size={24} color={theme.onSurfaceVariant} />
         </TouchableOpacity>
-      ))}
+      </View>
+
+      {/* Summary Card */}
+      <View style={[styles.card, { backgroundColor: theme.primaryContainer }]}>
+        <View style={styles.cardRow}>
+          <View>
+            <Text style={[styles.cardLabel, { color: theme.onPrimaryContainer }]}>Total Balance</Text>
+            <Text style={[styles.cardValue, { color: theme.onPrimaryContainer }]}>$12,450.00</Text>
+          </View>
+          <View style={[styles.iconCircle, { backgroundColor: 'rgba(255,255,255,0.2)' }]}>
+            <MD3Icon name="wallet" size={24} color={theme.onPrimaryContainer} />
+          </View>
+        </View>
+      </View>
+
+      {/* Quick Actions Grid */}
+      <Text style={[styles.sectionTitle, { color: theme.onSurface }]}>Quick Tools</Text>
+      
+      <View style={styles.grid}>
+        <TouchableOpacity 
+          style={[styles.gridItem, { backgroundColor: theme.surface, borderColor: theme.outline }]}
+          onPress={onOpenTools}
+        >
+          <MD3Icon name="file-pdf-box" size={32} color={theme.primary} />
+          <Text style={[styles.gridLabel, { color: theme.onSurface }]}>PDF Tools</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={[styles.gridItem, { backgroundColor: theme.surface, borderColor: theme.outline }]}
+        >
+          <MD3Icon name="calculator" size={32} color={theme.primary} />
+          <Text style={[styles.gridLabel, { color: theme.onSurface }]}>Calculator</Text>
+        </TouchableOpacity>
+        
+         <TouchableOpacity 
+          style={[styles.gridItem, { backgroundColor: theme.surface, borderColor: theme.outline }]}
+        >
+          <MD3Icon name="chart-box" size={32} color={theme.primary} />
+          <Text style={[styles.gridLabel, { color: theme.onSurface }]}>Reports</Text>
+        </TouchableOpacity>
+        
+         <TouchableOpacity 
+          style={[styles.gridItem, { backgroundColor: theme.surface, borderColor: theme.outline }]}
+        >
+          <MD3Icon name="currency-usd" size={32} color={theme.primary} />
+          <Text style={[styles.gridLabel, { color: theme.onSurface }]}>Payroll</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Recent Activity Placeholder */}
+      <Text style={[styles.sectionTitle, { color: theme.onSurface, marginTop: 24 }]}>Recent Activity</Text>
+      <View style={[styles.activityCard, { backgroundColor: theme.surface }]}>
+         <Text style={{ color: theme.onSurfaceVariant, textAlign: 'center', padding: 20 }}>
+           No recent activity found.
+         </Text>
+      </View>
+
     </ScrollView>
-
-    {/* Tools Grid */}
-    <View style={styles.sectionBox}>
-      <Text style={[styles.title, { color: C.onSurfaceVariant }]}>Tools</Text>
-    </View>
-    <View style={styles.grid}>
-      {TOOLS.map((tool: any) => (
-        <TouchableOpacity key={tool.id} onPress={() => onToolPress(tool)} style={[styles.toolCard, { backgroundColor: C.surfaceContainerHigh }]}>
-          <View style={styles.rowTop}>
-            <View style={[styles.iconBox, { backgroundColor: C.primaryContainer }]}>
-              <MD3Icon symbol={tool.icon} size={22} color={C.onPrimaryContainer} />
-            </View>
-            <View style={[styles.badge, { backgroundColor: C.surfaceContainer }]}>
-              <Text style={[styles.count, { color: C.onSurfaceVariant }]}>{tool.count}</Text>
-            </View>
-          </View>
-          <View>
-            <Text style={[styles.toolTitle, { color: C.onSurface }]}>{tool.title}</Text>
-            <Text style={[styles.meta, { color: C.onSurfaceVariant }]}>Tap to open</Text>
-          </View>
-        </TouchableOpacity>
-      ))}
-    </View>
-
-    {/* Files List */}
-    <View style={[styles.sectionBox, styles.rowBetween, { paddingRight: 16 }]}>
-      <Text style={[styles.title, { color: C.onSurfaceVariant }]}>Saved Files</Text>
-      <Text style={{ color: C.primary, fontWeight: '600' }}>View All</Text>
-    </View>
-    <View style={{ paddingHorizontal: 16 }}>
-      {FILES.map((f: any, i: number) => (
-        <TouchableOpacity key={i} style={[styles.fileRow, { backgroundColor: C.surfaceContainer }]}>
-          <View style={[styles.fileIcon, { backgroundColor: C.secondaryContainer }]}>
-            <MD3Icon symbol={f.icon} size={20} color={C.onSecondaryContainer} />
-          </View>
-          <View style={{ flex: 1, marginLeft: 16 }}>
-            <Text style={[styles.name, { color: C.onSurface }]}>{f.name}</Text>
-            <Text style={[styles.meta, { color: C.onSurfaceVariant }]}>{f.size} • {f.date}</Text>
-          </View>
-          <MD3Icon symbol="⋮" color={C.onSurfaceVariant} />
-        </TouchableOpacity>
-      ))}
-    </View>
-  </ScrollView>
-);
+  );
+};
 
 const styles = StyleSheet.create({
-  sectionBox: { paddingHorizontal: 20, marginBottom: 12, marginTop: 24 },
-  title: { fontSize: 14, fontWeight: '500' },
-  resumeCard: { width: 150, height: 85, marginRight: 12, borderRadius: 16, padding: 12, justifyContent: 'space-between' },
-  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  rowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  tag: { fontSize: 10, fontWeight: 'bold' },
-  name: { fontSize: 13, fontWeight: '500' },
-  meta: { fontSize: 11 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 16, gap: 12 },
-  toolCard: { width: '48%', height: 140, borderRadius: 24, padding: 16, justifyContent: 'space-between' },
-  iconBox: { width: 48, height: 48, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-  badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
-  count: { fontSize: 12, fontWeight: 'bold' },
-  toolTitle: { fontSize: 16, fontWeight: '500', marginBottom: 2 },
-  fileRow: { flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 16, marginBottom: 8 },
-  fileIcon: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  container: {
+    flex: 1,
+  },
+  contentContainer: {
+    padding: 20,
+    paddingBottom: 100, // Space for bottom nav
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  greeting: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  title: {
+    fontSize: 28,
+    fontWeight: 'bold',
+  },
+  profileButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  card: {
+    borderRadius: 20,
+    padding: 24,
+    marginBottom: 24,
+    elevation: 2,
+  },
+  cardRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  cardLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    opacity: 0.9,
+    marginBottom: 4,
+  },
+  cardValue: {
+    fontSize: 32,
+    fontWeight: 'bold',
+  },
+  iconCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 12,
+  },
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  gridItem: {
+    width: '48%', // Roughly half width
+    padding: 20,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  gridLabel: {
+    marginTop: 8,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  activityCard: {
+    borderRadius: 16,
+    padding: 10,
+  }
 });
+
+export default DashboardTab;
