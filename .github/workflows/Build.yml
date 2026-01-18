@@ -14,21 +14,22 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: '17'
-          cache: 'gradle' # Caches Gradle dependencies
+          cache: 'gradle'
 
+      # Updated Cache Key for 3.24.0
       - name: Cache Flutter SDK
         id: cache-flutter
         uses: actions/cache@v4
         with:
           path: /opt/hostedtoolcache/flutter
-          key: flutter-3.19.0-ubuntu-latest
+          key: flutter-3.24.0-ubuntu-latest
 
+      # Updated Flutter Version to 3.24.0 (Supports Material 3 containers)
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.19.0'
+          flutter-version: '3.24.0'
           channel: 'stable'
-          # If cache exists, this step is instant
 
       - name: Get Dependencies
         run: flutter pub get
