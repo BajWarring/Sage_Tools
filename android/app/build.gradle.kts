@@ -1,4 +1,5 @@
-import java.util.Properties // <--- FIX: Import explicit class to avoid name conflict
+import java.util.Properties
+import java.io.FileInputStream
 
 plugins {
     id("com.android.application")
@@ -6,8 +7,7 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-// --- START: Define Version Variables ---
-val localProperties = Properties() // Now usage is clean
+val localProperties = Properties()
 val localPropertiesFile = rootProject.file("local.properties")
 if (localPropertiesFile.exists()) {
     localPropertiesFile.inputStream().use { localProperties.load(it) }
@@ -15,7 +15,6 @@ if (localPropertiesFile.exists()) {
 
 val flutterVersionCode = localProperties.getProperty("flutter.versionCode")?.toInt() ?: 1
 val flutterVersionName = localProperties.getProperty("flutter.versionName") ?: "1.0"
-// --- END: Define Version Variables ---
 
 android {
     namespace = "com.sage.tools"
@@ -31,6 +30,17 @@ android {
         versionName = flutterVersionName
     }
 
+    // 1. Define the Signing Config
+    signingConfigs {
+        create("release") {
+            // We will create this file in the GitHub Action
+            storeFile = file("app.jks")
+            storePassword = "password"
+            keyAlias = "key"
+            keyPassword = "password"
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
@@ -42,9 +52,10 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true 
+            // 2. Apply the Signing Config
+            signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("debug")
         }
     }
 }
