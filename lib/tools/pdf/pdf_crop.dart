@@ -50,11 +50,11 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       final doc = await PdfDocument.openFile(widget.filePath);
       final page = await doc.getPage(1); // 1-based index
       
-      // Render at 2x scale for sharpness on mobile screens
+      // FIX: Removed invalid 'format' parameter. 
+      // The library renders raw pixels by default which works with our Image.memory
       final image = await page.render(
         width: (page.width * 2).toInt(), 
-        height: (page.height * 2).toInt(),
-        format: PdfPageFormat.png // Ensure alpha channel is handled
+        height: (page.height * 2).toInt()
       );
 
       if (mounted) {
@@ -71,7 +71,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
 
   // --- Input Handlers ---
   void _updateControllers() {
-    // Update text boxes when Touch moves the box
+    if (!mounted) return;
     _xCtrl.text = _cropRect.left.toInt().toString();
     _yCtrl.text = _cropRect.top.toInt().toString();
     _wCtrl.text = _cropRect.width.toInt().toString();
@@ -79,7 +79,6 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
   }
 
   void _onTextChange() {
-    // Update box when Text changes
     if (_layoutSize == null) return;
     
     double? x = double.tryParse(_xCtrl.text);
@@ -88,11 +87,10 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     double? h = double.tryParse(_hCtrl.text);
 
     if (x != null && y != null && w != null && h != null) {
-      // Clamp to bounds
       double right = x + w;
       double bottom = y + h;
       
-      // Basic validation to prevent crash
+      // Basic validation
       if (right <= _layoutSize!.width && bottom <= _layoutSize!.height) {
         setState(() {
           _cropRect = Rect.fromLTWH(x, y, w, h);
@@ -107,10 +105,8 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // Request Permission first
-      var status = await Permission.storage.request();
-      if (status.isDenied) {
-        // Fallback for Android 11+ managed external storage
+      // Permissions
+      if (await Permission.storage.request().isDenied) {
         await Permission.manageExternalStorage.request();
       }
 
@@ -118,7 +114,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       final loadedDoc = vector_pdf.PdfDocument(inputBytes: bytes);
       final loadedPage = loadedDoc.pages[0];
 
-      // 1. Calculate Scale (PDF Points vs Screen Pixels)
+      // 1. Calculate Scale
       double scale = _pdfPageSize!.width / _layoutSize!.width;
       
       double cropX = _cropRect.left * scale;
@@ -136,12 +132,11 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       final template = loadedPage.createTemplate();
       newPage.graphics.drawPdfTemplate(template, Offset(-cropX, -cropY));
 
-      // 4. Save to Downloads/SageTools
+      // 4. Save to Downloads
       List<int> savedBytes = await newDoc.save();
       newDoc.dispose();
       loadedDoc.dispose();
 
-      // Prepare Path: /storage/emulated/0/Download/SageTools
       final Directory? downloadsDir = Directory('/storage/emulated/0/Download');
       final sageDir = Directory('${downloadsDir!.path}/SageTools');
       if (!await sageDir.exists()) {
@@ -188,7 +183,6 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
         newR = Rect.fromLTRB(newR.left, newR.top, max(newR.left + minSize, newR.right + delta.dx), max(newR.top + minSize, newR.bottom + delta.dy)); break;
     }
 
-    // Clamp
     double left = max(0, newR.left);
     double top = max(0, newR.top);
     double right = min(_layoutSize!.width, newR.right);
@@ -206,7 +200,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Color(0xFF1E1E1E),
-      resizeToAvoidBottomInset: false, // Prevent keyboard from squishing layout
+      resizeToAvoidBottomInset: false,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -226,24 +220,20 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       ),
       body: Column(
         children: [
-          // 1. Control Bar (Inputs)
+          // 1. Inputs
           Container(
             padding: EdgeInsets.symmetric(vertical: 12, horizontal: 16),
             color: Colors.black45,
             child: Row(
               children: [
-                _buildInput("X", _xCtrl),
-                SizedBox(width: 10),
-                _buildInput("Y", _yCtrl),
-                SizedBox(width: 10),
-                _buildInput("W", _wCtrl),
-                SizedBox(width: 10),
+                _buildInput("X", _xCtrl), SizedBox(width: 10),
+                _buildInput("Y", _yCtrl), SizedBox(width: 10),
+                _buildInput("W", _wCtrl), SizedBox(width: 10),
                 _buildInput("H", _hCtrl),
               ],
             ),
           ),
-
-          // 2. Editor Area
+          // 2. Editor
           Expanded(
             child: _isLoading
               ? Center(child: CircularProgressIndicator())
@@ -256,7 +246,6 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                     double imgW = _pageImage!.width.toDouble();
                     double imgH = _pageImage!.height.toDouble();
                     
-                    // Aspect Fit Logic
                     double scale = min(availW / imgW, availH / imgH);
                     double displayW = imgW * scale;
                     double displayH = imgH * scale;
@@ -265,7 +254,6 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
 
                     _layoutSize = Size(displayW, displayH);
                     
-                    // Init Box Centered if first run
                     if (_cropRect == Rect.zero) {
                        double size = min(displayW, displayH) * 0.8;
                        _cropRect = Rect.fromCenter(center: Offset(displayW/2, displayH/2), width: size, height: size);
@@ -278,19 +266,12 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                           left: offX, top: offY, width: displayW, height: displayH,
                           child: Stack(
                             children: [
-                              // A. White Background (Fixes transparent PDF issue)
                               Container(width: displayW, height: displayH, color: Colors.white),
-                              
-                              // B. The PDF Image
                               Image.memory(_pageImage!.pixels, width: displayW, height: displayH, fit: BoxFit.contain),
-                              
-                              // C. Dark Scrim
                               Positioned(left: 0, top: 0, width: displayW, height: _cropRect.top, child: Container(color: Colors.black.withOpacity(0.5))),
                               Positioned(left: 0, top: _cropRect.bottom, width: displayW, height: displayH - _cropRect.bottom, child: Container(color: Colors.black.withOpacity(0.5))),
                               Positioned(left: 0, top: _cropRect.top, width: _cropRect.left, height: _cropRect.height, child: Container(color: Colors.black.withOpacity(0.5))),
                               Positioned(left: _cropRect.right, top: _cropRect.top, width: displayW - _cropRect.right, height: _cropRect.height, child: Container(color: Colors.black.withOpacity(0.5))),
-                              
-                              // D. Crop Box
                               Positioned.fromRect(
                                 rect: _cropRect,
                                 child: GestureDetector(
@@ -300,10 +281,8 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                                     decoration: BoxDecoration(border: Border.all(color: Colors.white, width: 1.5), color: Colors.white.withOpacity(0.01)),
                                     child: Stack(
                                       children: [
-                                        // Grid
                                         Column(children: [Spacer(), Divider(color: Colors.white24, height: 1), Spacer(), Divider(color: Colors.white24, height: 1), Spacer()]),
                                         Row(children: [Spacer(), VerticalDivider(color: Colors.white24, width: 1), Spacer(), VerticalDivider(color: Colors.white24, width: 1), Spacer()]),
-                                        // Handles
                                         _buildHandle('topLeft', Alignment.topLeft), _buildHandle('topRight', Alignment.topRight),
                                         _buildHandle('bottomLeft', Alignment.bottomLeft), _buildHandle('bottomRight', Alignment.bottomRight),
                                       ],
@@ -341,7 +320,6 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                 style: TextStyle(color: Colors.white, fontSize: 13),
                 decoration: InputDecoration(border: InputBorder.none, isDense: true, contentPadding: EdgeInsets.only(bottom: 2)),
                 onSubmitted: (_) => _onTextChange(),
-                // Note: We use onSubmitted or Focus loss to trigger update to avoid jumpy UI while typing
               ),
             ),
           ],
