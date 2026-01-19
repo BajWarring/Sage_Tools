@@ -4,17 +4,28 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// --- START: Define Version Variables ---
+val localProperties = java.util.Properties()
+val localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.inputStream().use { localProperties.load(it) }
+}
+
+val flutterVersionCode = localProperties.getProperty("flutter.versionCode")?.toInt() ?: 1
+val flutterVersionName = localProperties.getProperty("flutter.versionName") ?: "1.0"
+// --- END: Define Version Variables ---
+
 android {
     namespace = "com.sage.tools"
     compileSdk = 35
     ndkVersion = "26.1.10909125"
-    buildToolsVersion = "35.0.0" // <--- CRITICAL FIX
+    buildToolsVersion = "35.0.0"
 
     defaultConfig {
         applicationId = "com.sage.tools"
         minSdk = 23
         targetSdk = 35
-        versionCode = flutterVersionCode.toInteger()
+        versionCode = flutterVersionCode
         versionName = flutterVersionName
     }
 
@@ -30,7 +41,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = true 
-            // Basic shrinking for release
+            // Shrink resources for release
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("debug")
         }
