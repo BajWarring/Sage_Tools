@@ -11,6 +11,25 @@ class DashboardView extends ConsumerWidget {
     final tools = ref.watch(toolsProvider);
     final theme = Theme.of(context).colorScheme;
 
+    // Logic to handle what happens AFTER the sheet closes
+    Future<void> _onToolSelected(String toolId, String action) async {
+      if (toolId == 'pdf' && action == 'Crop') {
+        // 1. Pick File (Using the valid Dashboard Context)
+        FilePickerResult? result = await FilePicker.platform.pickFiles(
+          type: FileType.custom, 
+          allowedExtensions: ['pdf']
+        );
+        
+        if (result != null && result.files.single.path != null) {
+          // 2. Navigate (Context is safe here)
+          Navigator.push(
+            context, 
+            MaterialPageRoute(builder: (c) => PdfCropScreen(filePath: result.files.single.path!))
+          );
+        }
+      }
+    }
+
     return ListView(
       padding: EdgeInsets.fromLTRB(16, 8, 16, 100),
       children: [
@@ -26,12 +45,21 @@ class DashboardView extends ConsumerWidget {
           itemBuilder: (ctx, i) {
             final t = tools[i];
             return GestureDetector(
-              onTap: () => showModalBottomSheet(
-                context: context, isScrollControlled: true,
-                backgroundColor: theme.surfaceContainer,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
-                builder: (c) => ToolSheet(tool: t)
-              ),
+              onTap: () async {
+                // Await the result from the sheet
+                final action = await showModalBottomSheet<String>(
+                  context: context, 
+                  isScrollControlled: true,
+                  backgroundColor: theme.surfaceContainer,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
+                  builder: (c) => ToolSheet(tool: t)
+                );
+
+                // If an action was returned, execute it
+                if (action != null) {
+                  _onToolSelected(t.id, action);
+                }
+              },
               child: Container(
                 padding: EdgeInsets.all(16),
                 decoration: BoxDecoration(color: theme.surfaceContainerHigh, borderRadius: BorderRadius.circular(24)),
@@ -103,16 +131,6 @@ class ToolSheet extends StatelessWidget {
   final ToolItem tool;
   ToolSheet({required this.tool});
 
-  Future<void> _handleToolAction(BuildContext context, String action) async {
-    if (tool.id == 'pdf' && action == 'Crop') {
-      Navigator.pop(context);
-      FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf']);
-      if (result != null) {
-        Navigator.push(context, MaterialPageRoute(builder: (c) => PdfCropScreen(filePath: result.files.single.path!)));
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context).colorScheme;
@@ -129,7 +147,8 @@ class ToolSheet extends StatelessWidget {
             child: GridView.count(
               crossAxisCount: 3, crossAxisSpacing: 12, mainAxisSpacing: 12,
               children: tool.items.map((item) => GestureDetector(
-                onTap: () => _handleToolAction(context, item),
+                // Simply return the action name to the Dashboard
+                onTap: () => Navigator.pop(context, item),
                 child: Container(
                   decoration: BoxDecoration(color: theme.surfaceContainer, borderRadius: BorderRadius.circular(16)),
                   child: Column(
