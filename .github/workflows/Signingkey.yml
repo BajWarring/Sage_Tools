@@ -33,6 +33,9 @@ jobs:
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
-          git add android/app/sage.jks android/key.properties
+          
+          # FIX: Use -f to force add files even if they are in .gitignore
+          git add -f android/app/sage.jks android/key.properties
+          
           git commit -m "Add permanent signing key"
           git push
