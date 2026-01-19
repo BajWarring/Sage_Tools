@@ -21,7 +21,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
   Size? _layoutSize;          
   Size? _pdfPageSize;         
   bool _isLoading = true;
-  int _rotation = 0; // 0, 90, 180, 270
+  int _rotation = 0; 
   
   // UX Interaction
   String _activeHandle = ''; 
@@ -45,11 +45,11 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       final vectorDoc = vector_pdf.PdfDocument(inputBytes: bytes);
       final vectorPage = vectorDoc.pages[0];
       
-      // Check rotation to handle Landscape/Portrait swaps correctly
+      // FIX: Use PdfPageRotateAngle instead of PdfRotation
       _rotation = 0;
-      if (vectorPage.rotation == vector_pdf.PdfRotation.angle90) _rotation = 90;
-      else if (vectorPage.rotation == vector_pdf.PdfRotation.angle180) _rotation = 180;
-      else if (vectorPage.rotation == vector_pdf.PdfRotation.angle270) _rotation = 270;
+      if (vectorPage.rotation == vector_pdf.PdfPageRotateAngle.rotateAngle90) _rotation = 90;
+      else if (vectorPage.rotation == vector_pdf.PdfPageRotateAngle.rotateAngle180) _rotation = 180;
+      else if (vectorPage.rotation == vector_pdf.PdfPageRotateAngle.rotateAngle270) _rotation = 270;
 
       // If rotated 90/270, swap W and H for the 'Visual' size calculation
       if (_rotation == 90 || _rotation == 270) {
@@ -127,7 +127,6 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       final loadedPage = loadedDoc.pages[0];
 
       // 1. Calculate Scale based on the VISUAL (Rotation Corrected) size
-      // This ensures if you see width 500, we map it to PDF width 500 (even if stored as height)
       double scale = _pdfPageSize!.width / _layoutSize!.width;
       
       double cropX = _cropRect.left * scale;
@@ -144,12 +143,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       // 3. Draw Template with Transformations
       final template = loadedPage.createTemplate();
       
-      // If rotated, we need to handle the graphics state to ensure 'Up' is 'Up'
-      // Ideally, Syncfusion handles simple offsets automatically, but for mixed rotation:
-      // We rely on the fact that we mapped Visual-to-Visual coordinates.
-      
       // Draw the template offset by the crop amount
-      // This "slides" the content so the cropped area is at (0,0) of the new page
       newPage.graphics.drawPdfTemplate(template, Offset(-cropX, -cropY));
 
       // 4. Save to Downloads/SageTools
@@ -169,7 +163,6 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
 
       Navigator.pop(context);
       
-      // Show explicit path
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text("Saved to: Download/SageTools/$fileName"),
         backgroundColor: Theme.of(context).colorScheme.primary,
