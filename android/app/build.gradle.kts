@@ -7,6 +7,7 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// --- Version Config ---
 val localProperties = Properties()
 val localPropertiesFile = rootProject.file("local.properties")
 if (localPropertiesFile.exists()) {
@@ -15,6 +16,13 @@ if (localPropertiesFile.exists()) {
 
 val flutterVersionCode = localProperties.getProperty("flutter.versionCode")?.toInt() ?: 1
 val flutterVersionName = localProperties.getProperty("flutter.versionName") ?: "1.0"
+
+// --- Load Keystore Properties ---
+val keystoreProperties = Properties()
+val keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+}
 
 android {
     namespace = "com.sage.tools"
@@ -30,14 +38,13 @@ android {
         versionName = flutterVersionName
     }
 
-    // 1. Define the Signing Config
+    // --- Signing Configuration ---
     signingConfigs {
         create("release") {
-            // We will create this file in the GitHub Action
-            storeFile = file("app.jks")
-            storePassword = "password"
-            keyAlias = "key"
-            keyPassword = "password"
+            keyAlias = keystoreProperties["keyAlias"] as String?
+            keyPassword = keystoreProperties["keyPassword"] as String?
+            storeFile = keystoreProperties["storeFile"]?.let { file(it) }
+            storePassword = keystoreProperties["storePassword"] as String?
         }
     }
 
@@ -52,9 +59,9 @@ android {
 
     buildTypes {
         release {
-            // 2. Apply the Signing Config
+            // Apply the signing config here
             signingConfig = signingConfigs.getByName("release")
-            isMinifyEnabled = true
+            isMinifyEnabled = true 
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
