@@ -1,3 +1,5 @@
+import java.util.Properties // <--- FIX: Import explicit class to avoid name conflict
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
@@ -5,7 +7,7 @@ plugins {
 }
 
 // --- START: Define Version Variables ---
-val localProperties = java.util.Properties()
+val localProperties = Properties() // Now usage is clean
 val localPropertiesFile = rootProject.file("local.properties")
 if (localPropertiesFile.exists()) {
     localPropertiesFile.inputStream().use { localProperties.load(it) }
@@ -41,7 +43,6 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = true 
-            // Shrink resources for release
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("debug")
         }
