@@ -39,7 +39,7 @@ dependencies:
   pdf_render: ^1.1.2
   syncfusion_flutter_pdf: ^24.1.41 # Allows vector manipulation
   permission_handler: ^11.3.0
-
+  shared_preferences: ^2.2.2
 
 
   # The following adds the Cupertino Icons font to your application.
