@@ -35,7 +35,7 @@ class DashboardTab extends ConsumerWidget {
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: AppBar(
-        backgroundColor: theme.surfaceContainer, // Dynamic
+        backgroundColor: theme.surfaceContainer,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         toolbarHeight: 80,
@@ -58,7 +58,6 @@ class DashboardTab extends ConsumerWidget {
       body: ListView(
         padding: EdgeInsets.fromLTRB(16, 16, 16, 100),
         children: [
-          // 1. Recent
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -79,8 +78,6 @@ class DashboardTab extends ConsumerWidget {
             ),
           ),
           SizedBox(height: 32),
-
-          // 2. Tools
           Text("TOOLS", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: theme.onSurfaceVariant, letterSpacing: 1.0)),
           SizedBox(height: 12),
           GridView.builder(
@@ -97,8 +94,6 @@ class DashboardTab extends ConsumerWidget {
             },
           ),
           SizedBox(height: 32),
-
-          // 3. Saved
           Text("SAVED FILES", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: theme.onSurfaceVariant, letterSpacing: 1.0)),
           SizedBox(height: 12),
           Container(
@@ -125,7 +120,6 @@ class _ToolModal extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context).colorScheme;
-    
     return Container(
       padding: EdgeInsets.all(24),
       decoration: BoxDecoration(color: theme.surfaceContainer, borderRadius: BorderRadius.vertical(top: Radius.circular(32))),
@@ -169,25 +163,28 @@ class _ToolModal extends StatelessWidget {
   }
 }
 
-// --- Components (Dynamic) ---
-Widget _RecentCard(BuildContext context, String title, String sub, IconData icon, MaterialColor seed) {
-  final t = Theme.of(context).colorScheme;
-  // Create a mini-scheme for this card based on the seed color
-  final scheme = ColorScheme.fromSeed(seedColor: seed, brightness: t.brightness);
+// --- Components (Vibrant) ---
+Widget _RecentCard(BuildContext context, String title, String sub, IconData icon, MaterialColor color) {
+  final isDark = Theme.of(context).brightness == Brightness.dark;
+  // Use vibrant 50/100 for light, 900/800 for dark
+  final bg = isDark ? color[900]! : color[50]!;
+  final iconBg = isDark ? color[800]! : color[100]!;
+  final iconFg = isDark ? color[100]! : color[700]!;
+  final border = isDark ? color[800]! : color[100]!;
   
   return Container(
     width: 120, margin: EdgeInsets.only(right: 12),
     padding: EdgeInsets.all(12),
     decoration: BoxDecoration(
-      gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [scheme.surfaceContainerHighest, scheme.surface]),
+      gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [bg, Theme.of(context).colorScheme.surface]),
       borderRadius: BorderRadius.circular(16),
-      border: Border.all(color: scheme.outlineVariant.withOpacity(0.3)),
+      border: Border.all(color: border),
     ),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-      Container(width: 32, height: 32, decoration: BoxDecoration(color: scheme.primaryContainer, borderRadius: BorderRadius.circular(8)), child: Icon(icon, size: 16, color: scheme.onPrimaryContainer)),
+      Container(width: 32, height: 32, decoration: BoxDecoration(color: iconBg, borderRadius: BorderRadius.circular(8)), child: Icon(icon, size: 16, color: iconFg)),
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: t.onSurface)),
-        Text(sub, style: TextStyle(fontSize: 10, color: t.onSurfaceVariant)),
+        Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Theme.of(context).colorScheme.onSurface)),
+        Text(sub, style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.onSurfaceVariant)),
       ])
     ]),
   );
@@ -221,14 +218,17 @@ Widget _ComingSoonCard(BuildContext context) {
   );
 }
 
-Widget _FileRow(BuildContext context, String title, String sub, IconData icon, MaterialColor seed) {
+Widget _FileRow(BuildContext context, String title, String sub, IconData icon, MaterialColor color) {
+  final isDark = Theme.of(context).brightness == Brightness.dark;
+  final bg = isDark ? color[900]! : color[50]!;
+  final fg = isDark ? color[100]! : color[700]!;
   final t = Theme.of(context).colorScheme;
-  final scheme = ColorScheme.fromSeed(seedColor: seed, brightness: t.brightness);
+
   return Padding(
     padding: const EdgeInsets.all(16.0),
     child: Row(
       children: [
-        Container(width: 40, height: 40, decoration: BoxDecoration(color: scheme.primaryContainer, borderRadius: BorderRadius.circular(8)), child: Icon(icon, color: scheme.onPrimaryContainer, size: 20)),
+        Container(width: 40, height: 40, decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(8)), child: Icon(icon, color: fg, size: 20)),
         SizedBox(width: 12),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(title, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: t.onSurface)),
