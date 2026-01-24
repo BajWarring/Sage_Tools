@@ -8,8 +8,16 @@ class SageTheme {
   final String id;
   final String name;
   final MaterialColor primary;
+  final Color background;
+  final Color surface;
   
-  SageTheme({required this.id, required this.name, required this.primary});
+  SageTheme({
+    required this.id, 
+    required this.name, 
+    required this.primary,
+    this.background = const Color(0xFFF4F4F5), // Default Zinc-50
+    this.surface = Colors.white,
+  });
 }
 
 // --- 2. Color Swatches ---
@@ -82,7 +90,7 @@ class ThemeNotifier extends StateNotifier<SageTheme> {
   }
 }
 
-// Theme Mode Provider (Light / Dark / System)
+// Theme Mode Provider
 final themeModeProvider = StateNotifierProvider<ThemeModeNotifier, ThemeMode>((ref) {
   return ThemeModeNotifier();
 });
