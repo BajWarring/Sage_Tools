@@ -7,80 +7,63 @@ import '../tools/pdf/pdf_crop.dart';
 class DashboardTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final theme = ref.watch(currentThemeProvider);
-    final p = theme.primary; // shorthand for primary swatch
+    final theme = Theme.of(context).colorScheme;
+    final sageTheme = ref.watch(currentThemeProvider);
+    final p = sageTheme.primary;
 
-    // Logic moved here to ensure 'context' is always valid
     Future<void> _handleToolSelection(String toolId) async {
       if (toolId == 'crop-pdf') {
-        // 1. Pick File
-        FilePickerResult? result = await FilePicker.platform.pickFiles(
-          type: FileType.custom, 
-          allowedExtensions: ['pdf']
-        );
-        
-        // 2. Navigate (Using Dashboard's persistent context)
+        FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf']);
         if (result != null && result.files.single.path != null) {
-          Navigator.push(
-            context, 
-            MaterialPageRoute(builder: (c) => PdfCropScreen(filePath: result.files.single.path!))
-          );
+          Navigator.push(context, MaterialPageRoute(builder: (c) => PdfCropScreen(filePath: result.files.single.path!)));
         }
       } else {
-        // Placeholder for other tools
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Tool '$toolId' opening soon..."))
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Tool '$toolId' opening soon...")));
       }
     }
 
     void _showToolModal(ToolItem tool) async {
-      // Wait for the modal to return a Result (ID of the sub-tool)
       final String? selectedId = await showModalBottomSheet<String>(
         context: context,
         backgroundColor: Colors.transparent,
         isScrollControlled: true,
         builder: (context) => _ToolModal(tool: tool, ref: ref),
       );
-
-      // If we got an ID back, handle it
-      if (selectedId != null) {
-        _handleToolSelection(selectedId);
-      }
+      if (selectedId != null) _handleToolSelection(selectedId);
     }
 
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: theme.surfaceContainer, // Dynamic
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         toolbarHeight: 80,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text("Sage Tools", style: TextStyle(color: p[800], fontWeight: FontWeight.bold, fontSize: 24)),
-            Text("All-in-one Utility", style: TextStyle(color: Colors.grey[400], fontSize: 12, fontWeight: FontWeight.w500)),
+            Text("Sage Tools", style: TextStyle(color: theme.onSurface, fontWeight: FontWeight.bold, fontSize: 24)),
+            Text("All-in-one Utility", style: TextStyle(color: theme.onSurfaceVariant, fontSize: 12, fontWeight: FontWeight.w500)),
           ],
         ),
         actions: [
           Container(
             margin: EdgeInsets.only(right: 20),
             width: 36, height: 36,
-            decoration: BoxDecoration(color: p[100], shape: BoxShape.circle),
-            child: Icon(Icons.person, color: p[600], size: 16),
+            decoration: BoxDecoration(color: theme.primaryContainer, shape: BoxShape.circle),
+            child: Icon(Icons.person, color: theme.onPrimaryContainer, size: 16),
           )
         ],
       ),
       body: ListView(
         padding: EdgeInsets.fromLTRB(16, 16, 16, 100),
         children: [
-          // 1. Recent Section
+          // 1. Recent
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text("RECENT", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey[600], letterSpacing: 1.0)),
-              Text("View All", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: p[600])),
+              Text("RECENT", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: theme.onSurfaceVariant, letterSpacing: 1.0)),
+              Text("View All", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: theme.primary)),
             ],
           ),
           SizedBox(height: 12),
@@ -89,52 +72,42 @@ class DashboardTab extends ConsumerWidget {
             child: ListView(
               scrollDirection: Axis.horizontal,
               children: [
-                _RecentCard(p, "Invoice_2024.pdf", "2 mins ago", Icons.picture_as_pdf_rounded, Colors.red[50]!, Colors.red[400]!),
-                _RecentCard(p, "Design_v2.png", "1 hr ago", Icons.image_rounded, Colors.blue[50]!, Colors.blue[400]!),
-                _RecentCard(p, "Voice_Note.mp3", "Yesterday", Icons.audiotrack_rounded, Colors.purple[50]!, Colors.purple[400]!),
+                _RecentCard(context, "Invoice_2024.pdf", "2 mins ago", Icons.picture_as_pdf_rounded, Colors.red),
+                _RecentCard(context, "Design_v2.png", "1 hr ago", Icons.image_rounded, Colors.blue),
+                _RecentCard(context, "Voice_Note.mp3", "Yesterday", Icons.audiotrack_rounded, Colors.purple),
               ],
             ),
           ),
-
           SizedBox(height: 32),
 
-          // 2. Tools Grid
-          Text("TOOLS", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey[600], letterSpacing: 1.0)),
+          // 2. Tools
+          Text("TOOLS", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: theme.onSurfaceVariant, letterSpacing: 1.0)),
           SizedBox(height: 12),
           GridView.builder(
             shrinkWrap: true,
             physics: NeverScrollableScrollPhysics(),
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 3, crossAxisSpacing: 12, mainAxisSpacing: 12, childAspectRatio: 1.0,
-            ),
-            itemCount: toolsData.length + 3, // +3 for Coming Soon
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3, crossAxisSpacing: 12, mainAxisSpacing: 12, childAspectRatio: 1.0),
+            itemCount: toolsData.length + 3,
             itemBuilder: (ctx, i) {
               if (i < toolsData.length) {
-                final tool = toolsData[i];
-                return _ToolCard(
-                  title: tool.title.split(' ')[0], 
-                  icon: tool.icon,
-                  color: p,
-                  onTap: () => _showToolModal(tool),
-                );
+                return _ToolCard(context, toolsData[i].title.split(' ')[0], toolsData[i].icon, p, () => _showToolModal(toolsData[i]));
               } else {
-                return _ComingSoonCard();
+                return _ComingSoonCard(context);
               }
             },
           ),
-
           SizedBox(height: 32),
 
-          // 3. Saved Files
-          Text("SAVED FILES", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey[600], letterSpacing: 1.0)),
+          // 3. Saved
+          Text("SAVED FILES", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: theme.onSurfaceVariant, letterSpacing: 1.0)),
           SizedBox(height: 12),
           Container(
-            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.grey[100]!)),
+            decoration: BoxDecoration(color: theme.surfaceContainer, borderRadius: BorderRadius.circular(16), border: Border.all(color: theme.outlineVariant.withOpacity(0.2))),
             child: Column(
               children: [
-                _FileRow(p, "Downloads", "12 items", Icons.folder_rounded, Colors.amber[50]!, Colors.amber[500]!),
-                Divider(height: 1, indent: 60),
-                _FileRow(p, "Project_Specs.html", "1.2 MB", Icons.html, p[50]!, p[600]!),
+                _FileRow(context, "Downloads", "12 items", Icons.folder_rounded, Colors.amber),
+                Divider(height: 1, indent: 60, color: theme.outlineVariant.withOpacity(0.2)),
+                _FileRow(context, "Project_Specs.html", "1.2 MB", Icons.html, p),
               ],
             ),
           ),
@@ -151,11 +124,11 @@ class _ToolModal extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final p = ref.watch(currentThemeProvider).primary;
+    final theme = Theme.of(context).colorScheme;
     
     return Container(
       padding: EdgeInsets.all(24),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(32))),
+      decoration: BoxDecoration(color: theme.surfaceContainer, borderRadius: BorderRadius.vertical(top: Radius.circular(32))),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -163,31 +136,28 @@ class _ToolModal extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Row(children: [
-                Icon(tool.icon, color: p[600]),
+                Icon(tool.icon, color: theme.primary),
                 SizedBox(width: 12),
-                Text(tool.title, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.grey[800])),
+                Text(tool.title, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: theme.onSurface)),
               ]),
-              IconButton(onPressed: () => Navigator.pop(context), icon: Icon(Icons.close, color: Colors.grey))
+              IconButton(onPressed: () => Navigator.pop(context), icon: Icon(Icons.close, color: theme.onSurfaceVariant))
             ],
           ),
-          Divider(),
+          Divider(color: theme.outlineVariant.withOpacity(0.2)),
           SizedBox(height: 16),
           GridView.count(
             crossAxisCount: 2, shrinkWrap: true, crossAxisSpacing: 12, mainAxisSpacing: 12, childAspectRatio: 2.5,
             children: tool.items.map((sub) => InkWell(
-              onTap: () {
-                // FIXED: Just return the ID. Do not try to push routes here.
-                Navigator.pop(context, sub.id);
-              },
+              onTap: () => Navigator.pop(context, sub.id),
               borderRadius: BorderRadius.circular(12),
               child: Container(
                 padding: EdgeInsets.all(12),
-                decoration: BoxDecoration(color: Colors.white, border: Border.all(color: Colors.grey[200]!), borderRadius: BorderRadius.circular(12)),
+                decoration: BoxDecoration(color: theme.surface, border: Border.all(color: theme.outlineVariant.withOpacity(0.2)), borderRadius: BorderRadius.circular(12)),
                 child: Row(
                   children: [
-                    Container(padding: EdgeInsets.all(8), decoration: BoxDecoration(color: p[50], shape: BoxShape.circle), child: Icon(sub.icon, size: 16, color: p[600])),
+                    Container(padding: EdgeInsets.all(8), decoration: BoxDecoration(color: theme.primaryContainer, shape: BoxShape.circle), child: Icon(sub.icon, size: 16, color: theme.onPrimaryContainer)),
                     SizedBox(width: 12),
-                    Text(sub.name, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey[700])),
+                    Text(sub.name, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: theme.onSurface)),
                   ],
                 ),
               ),
@@ -199,71 +169,72 @@ class _ToolModal extends StatelessWidget {
   }
 }
 
-// --- Components ---
-Widget _RecentCard(MaterialColor p, String title, String sub, IconData icon, Color bg, Color fg) {
+// --- Components (Dynamic) ---
+Widget _RecentCard(BuildContext context, String title, String sub, IconData icon, MaterialColor seed) {
+  final t = Theme.of(context).colorScheme;
+  // Create a mini-scheme for this card based on the seed color
+  final scheme = ColorScheme.fromSeed(seedColor: seed, brightness: t.brightness);
+  
   return Container(
     width: 120, margin: EdgeInsets.only(right: 12),
     padding: EdgeInsets.all(12),
     decoration: BoxDecoration(
-      gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [p[50]!, Colors.white]),
+      gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [scheme.surfaceContainerHighest, scheme.surface]),
       borderRadius: BorderRadius.circular(16),
-      border: Border.all(color: p[100]!),
+      border: Border.all(color: scheme.outlineVariant.withOpacity(0.3)),
     ),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-      Container(width: 32, height: 32, decoration: BoxDecoration(color: p[100], borderRadius: BorderRadius.circular(8)), child: Icon(icon, size: 16, color: p[600])),
+      Container(width: 32, height: 32, decoration: BoxDecoration(color: scheme.primaryContainer, borderRadius: BorderRadius.circular(8)), child: Icon(icon, size: 16, color: scheme.onPrimaryContainer)),
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-        Text(sub, style: TextStyle(fontSize: 10, color: Colors.grey[400])),
+        Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: t.onSurface)),
+        Text(sub, style: TextStyle(fontSize: 10, color: t.onSurfaceVariant)),
       ])
     ]),
   );
 }
 
-Widget _ToolCard({required String title, required IconData icon, required MaterialColor color, required VoidCallback onTap}) {
+Widget _ToolCard(BuildContext context, String title, IconData icon, MaterialColor p, VoidCallback onTap) {
+  final t = Theme.of(context).colorScheme;
   return InkWell(
     onTap: onTap,
     borderRadius: BorderRadius.circular(16),
     child: Container(
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.grey[100]!)),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            width: 40, height: 40,
-            decoration: BoxDecoration(color: color[100], shape: BoxShape.circle),
-            child: Icon(icon, color: color[600]),
-          ),
-          SizedBox(height: 8),
-          Text(title, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey[600])),
-        ],
-      ),
+      decoration: BoxDecoration(color: t.surfaceContainer, borderRadius: BorderRadius.circular(16), border: Border.all(color: t.outlineVariant.withOpacity(0.2))),
+      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        Container(width: 40, height: 40, decoration: BoxDecoration(color: t.primaryContainer, shape: BoxShape.circle), child: Icon(icon, color: t.onPrimaryContainer)),
+        SizedBox(height: 8),
+        Text(title, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: t.onSurfaceVariant)),
+      ]),
     ),
   );
 }
 
-Widget _ComingSoonCard() {
+Widget _ComingSoonCard(BuildContext context) {
+  final t = Theme.of(context).colorScheme;
   return Container(
-    decoration: BoxDecoration(color: Colors.grey[50], borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.grey[200]!)),
+    decoration: BoxDecoration(color: t.surface.withOpacity(0.5), borderRadius: BorderRadius.circular(16), border: Border.all(color: t.outlineVariant.withOpacity(0.1))),
     child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-      Container(width: 40, height: 40, decoration: BoxDecoration(color: Colors.grey[200], shape: BoxShape.circle), child: Icon(Icons.add, color: Colors.grey[400])),
+      Container(width: 40, height: 40, decoration: BoxDecoration(color: t.surfaceContainerHighest, shape: BoxShape.circle), child: Icon(Icons.add, color: t.onSurfaceVariant.withOpacity(0.5))),
       SizedBox(height: 8),
-      Text("Soon", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey[400])),
+      Text("Soon", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: t.onSurfaceVariant.withOpacity(0.5))),
     ]),
   );
 }
 
-Widget _FileRow(MaterialColor p, String title, String sub, IconData icon, Color bg, Color fg) {
+Widget _FileRow(BuildContext context, String title, String sub, IconData icon, MaterialColor seed) {
+  final t = Theme.of(context).colorScheme;
+  final scheme = ColorScheme.fromSeed(seedColor: seed, brightness: t.brightness);
   return Padding(
     padding: const EdgeInsets.all(16.0),
     child: Row(
       children: [
-        Container(width: 40, height: 40, decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(8)), child: Icon(icon, color: fg, size: 20)),
+        Container(width: 40, height: 40, decoration: BoxDecoration(color: scheme.primaryContainer, borderRadius: BorderRadius.circular(8)), child: Icon(icon, color: scheme.onPrimaryContainer, size: 20)),
         SizedBox(width: 12),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(title, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.grey[700])),
-          Text(sub, style: TextStyle(fontSize: 12, color: Colors.grey[400])),
+          Text(title, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: t.onSurface)),
+          Text(sub, style: TextStyle(fontSize: 12, color: t.onSurfaceVariant)),
         ])),
-        Icon(Icons.chevron_right, size: 16, color: Colors.grey[300]),
+        Icon(Icons.chevron_right, size: 16, color: t.onSurfaceVariant),
       ],
     ),
   );
