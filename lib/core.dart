@@ -2,15 +2,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-// --- 1. Data Models ---
 class SageTheme {
   final String id;
   final String name;
   final MaterialColor primary;
-  SageTheme({required this.id, required this.name, required this.primary});
+  final Color background;
+  final Color surface;
+  
+  SageTheme({
+    required this.id, 
+    required this.name, 
+    required this.primary,
+    this.background = const Color(0xFFF4F4F5),
+    this.surface = Colors.white,
+  });
 }
 
-// --- 2. Color Swatches ---
 final sageSwatch = MaterialColor(0xFF4E924E, {
   50: Color(0xFFF4F9F4), 100: Color(0xFFE3F2E3), 200: Color(0xFFC5E2C5),
   300: Color(0xFF9CCB9C), 400: Color(0xFF72AF72), 500: Color(0xFF4E924E),
@@ -50,7 +57,6 @@ final themes = [
   SageTheme(id: 'mono', name: 'Monochrome', primary: monochromeSwatch),
 ];
 
-// --- 3. Providers ---
 final currentThemeProvider = StateNotifierProvider<ThemeNotifier, SageTheme>((ref) => ThemeNotifier());
 class ThemeNotifier extends StateNotifier<SageTheme> {
   ThemeNotifier() : super(themes[0]) { _load(); }
@@ -85,7 +91,6 @@ class ThemeModeNotifier extends StateNotifier<ThemeMode> {
 
 final storagePathProvider = StateProvider<String>((ref) => '/storage/emulated/0/SageTools');
 
-// --- 4. Tool Data ---
 class ToolItem {
   final String id; final String title; final IconData icon; final List<SubTool> items;
   ToolItem(this.id, this.title, this.icon, this.items);
