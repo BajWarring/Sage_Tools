@@ -162,15 +162,9 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       
       final newPage = newDoc.pages.add();
 
-      // --- VECTOR FIX: White Background Layer ---
-      // This rectangle acts as a solid base so transparent text becomes visible
-      newPage.graphics.drawRectangle(
-        bounds: Rect.fromLTWH(0, 0, cW, cH),
-        brush: vector.PdfSolidBrush(vector.PdfColor(255, 255, 255)),
-        pen: vector.PdfPen(vector.PdfColor(255, 255, 255), width: 0)
-      );
-
-      // --- TRUE VECTOR CONTENT ---
+      // --- TRUE VECTOR CROP (No Background Layer) ---
+      // We draw the template strictly. 
+      // If text was missing before, it might have been the White BG layer covering it.
       final template = loadedPage.createTemplate();
       newPage.graphics.drawPdfTemplate(template, Offset(-cX, -cY));
 
@@ -200,6 +194,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     }
   }
 
+  // --- Fixed Geometry Logic ---
   void _onHandlePan(DragUpdateDetails d, String type, double scale) {
     if (_imageSize == null) return;
     double dx = d.delta.dx / scale;
@@ -208,11 +203,18 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     setState(() {
       Rect r = _cropRect;
       double minS = 20.0;
-      double newL = r.left, newT = r.top, newR = r.right, newB = r.bottom;
+      
+      // Calculate Proposed New Bounds
+      double newL = r.left;
+      double newT = r.top;
+      double newR = r.right;
+      double newB = r.bottom;
 
       if (type == 'body') {
-        double pL = newL + dx, pT = newT + dy;
-        double w = r.width, h = r.height;
+        double pL = newL + dx;
+        double pT = newT + dy;
+        double w = r.width;
+        double h = r.height;
         if (pL < 0) pL = 0;
         if (pL + w > _imageSize!.width) pL = _imageSize!.width - w;
         if (pT < 0) pT = 0;
@@ -222,32 +224,76 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
         return; 
       }
 
+      // Basic Handle Movement
       if (type.contains('l')) newL += dx;
       if (type.contains('r')) newR += dx;
       if (type.contains('t')) newT += dy;
       if (type.contains('b')) newB += dy;
 
+      // 1. Ratio Locking with Boundary Safety
       if (_isRatioLocked) {
         var list = _isLandscapeRatio ? _ratiosLandscape : _ratiosPortrait;
         double? ratio = list[_selectedRatioIndex]['val'];
+        
         if (ratio != null) {
-           if (type.contains('l') || type.contains('r')) {
-              double newW = newR - newL;
-              double newH = newW / ratio;
-              if (type.contains('t')) newT = newB - newH; else newB = newT + newH;
-           } else {
-              double newH = newB - newT;
-              double newW = newH * ratio;
-              if (type.contains('l')) newL = newR - newW; else newR = newL + newW;
+           // Determine which edge is driving
+           bool drivingWidth = type.contains('l') || type.contains('r');
+           bool drivingHeight = type.contains('t') || type.contains('b');
+           
+           // If dragging a corner, prioritize Width unless it hits wall
+           if (drivingWidth && drivingHeight) {
+             // Corner drag: Calculate based on width change first
+             double w = newR - newL;
+             double h = w / ratio;
+             
+             // Check if this Height fits
+             double testT = type.contains('t') ? newB - h : newT;
+             double testB = type.contains('b') ? newT + h : newB;
+             
+             if (testT < 0 || testB > _imageSize!.height) {
+               // Height bounds hit! Switch to driving by Height
+               drivingWidth = false;
+             } else {
+               // Width fits, Height fits. Apply Height.
+               if (type.contains('t')) newT = newB - h;
+               else newB = newT + h;
+             }
+           }
+
+           if (!drivingWidth) { // Driving by Height (Side handle or Boundary Constraint)
+              double h = newB - newT;
+              double w = h * ratio;
+              // Expand width from center if side handle, or edge if corner
+              if (type == 't' || type == 'b') {
+                 double center = r.left + r.width/2;
+                 newL = center - w/2;
+                 newR = center + w/2;
+              } else {
+                 if (type.contains('l')) newL = newR - w;
+                 else newR = newL + w;
+              }
+           }
+           
+           if (drivingWidth && !drivingHeight) { // Driving by Width (Side handle)
+              double w = newR - newL;
+              double h = w / ratio;
+              double center = r.top + r.height/2;
+              newT = center - h/2;
+              newB = center + h/2;
            }
         }
       }
 
+      // 2. Hard Screen Clamp (Final safety net)
+      newL = max(0, newL); 
+      newT = max(0, newT);
+      newR = min(_imageSize!.width, newR); 
+      newB = min(_imageSize!.height, newB);
+      
+      // 3. Min Size Clamp
       if (newR - newL < minS) { if (type.contains('l')) newL = newR - minS; else newR = newL + minS; }
       if (newB - newT < minS) { if (type.contains('t')) newT = newB - minS; else newB = newT + minS; }
 
-      newL = max(0, newL); newT = max(0, newT);
-      newR = min(_imageSize!.width, newR); newB = min(_imageSize!.height, newB);
       _cropRect = Rect.fromLTRB(newL, newT, newR, newB);
       _updateControllers();
     });
@@ -258,6 +304,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     final theme = Theme.of(context).colorScheme;
     final ratioList = _isLandscapeRatio ? _ratiosLandscape : _ratiosPortrait;
     
+    // UI Colors
     Color bg = theme.surface;
     Color panelBg = theme.surfaceContainer;
     Color border = theme.outlineVariant.withOpacity(0.2);
@@ -319,7 +366,13 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                       itemBuilder: (ctx, i) {
                         bool isSelected = i == _selectedRatioIndex;
                         String label = ratioList[i]['label'];
-                        if (i == 0) label = _isRatioLocked ? "Locked" : "Free";
+                        
+                        // Icon logic for first button
+                        IconData? icon;
+                        if (i == 0) {
+                          label = "";
+                          icon = _isRatioLocked ? Icons.lock : Icons.lock_open;
+                        }
 
                         return GestureDetector(
                           onTap: () {
@@ -336,8 +389,8 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                             ),
                             child: Row(
                               children: [
-                                if (i==0 && _isRatioLocked) ...[Icon(Icons.lock, size:12, color: theme.onPrimary), SizedBox(width:4)],
-                                Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: isSelected ? theme.onPrimary : subText)),
+                                if (icon != null) Icon(icon, size: 16, color: isSelected ? theme.onPrimary : subText),
+                                if (label.isNotEmpty) Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: isSelected ? theme.onPrimary : subText)),
                               ],
                             ),
                           ),
