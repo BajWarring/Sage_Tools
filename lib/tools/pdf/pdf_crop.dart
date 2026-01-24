@@ -31,7 +31,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
   bool _isLandscapeRatio = false;
   
   // UX State
-  int _selectedRatioIndex = 0; // 0 = Free
+  int _selectedRatioIndex = 0; // 0 = Free/Locked
   bool _isRatioLocked = false;
   String _activeHandle = ''; 
   
@@ -138,8 +138,6 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
         // Unlock
         _isRatioLocked = false;
         _selectedRatioIndex = 0; // Set to "Free"
-      } else {
-        // No action for clicking "Free" directly, users pick a ratio to lock
       }
     });
   }
@@ -150,7 +148,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       double? ratio = list[index]['val'];
 
       if (ratio == null) {
-        // "Free" selected
+        // "Free" selected -> Toggle lock
         _isRatioLocked = false;
         _selectedRatioIndex = 0;
       } else {
@@ -327,21 +325,28 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     final theme = Theme.of(context).colorScheme;
     final ratioList = _isLandscapeRatio ? _ratiosLandscape : _ratiosPortrait;
     
+    // Dynamic Colors for Dark Mode
+    Color bg = theme.surface;
+    Color panelBg = theme.surfaceContainer;
+    Color border = theme.outlineVariant.withOpacity(0.2);
+    Color text = theme.onSurface;
+    Color subText = theme.onSurfaceVariant;
+    
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: bg,
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: bg,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: Icon(Icons.chevron_left, color: Colors.grey[600], size: 28),
+          icon: Icon(Icons.chevron_left, color: subText, size: 28),
           onPressed: () => Navigator.pop(context),
         ),
-        title: Text("Crop PDF", style: TextStyle(color: Colors.grey[800], fontWeight: FontWeight.bold, fontSize: 20)),
+        title: Text("Crop PDF", style: TextStyle(color: text, fontWeight: FontWeight.bold, fontSize: 20)),
         centerTitle: false,
         bottom: PreferredSize(
           preferredSize: Size.fromHeight(1),
-          child: Container(color: Colors.grey[100], height: 1),
+          child: Container(color: border, height: 1),
         ),
       ),
       body: _isLoading 
@@ -351,7 +356,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
             // Controls
             Container(
               padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(color: Colors.white, border: Border(bottom: BorderSide(color: Colors.grey[100]!))),
+              decoration: BoxDecoration(color: panelBg, border: Border(bottom: BorderSide(color: border))),
               child: Column(
                 children: [
                   Row(
@@ -371,7 +376,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                         }),
                         icon: Icon(_isLandscapeRatio ? Icons.crop_landscape : Icons.crop_portrait, size: 16),
                         label: Text(_isLandscapeRatio ? "Landscape" : "Portrait"),
-                        style: OutlinedButton.styleFrom(foregroundColor: Colors.grey[600], side: BorderSide(color: Colors.grey[300]!)),
+                        style: OutlinedButton.styleFrom(foregroundColor: subText, side: BorderSide(color: border)),
                       ),
                     ],
                   ),
@@ -384,36 +389,30 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                       separatorBuilder: (_,__) => SizedBox(width: 8),
                       itemBuilder: (ctx, i) {
                         bool isSelected = i == _selectedRatioIndex;
-                        // Logic for label: If this index is selected AND it's not "Free" (0), show "Locked"
-                        // But actually user requested: "Free" button becomes "Locked"
                         String label = ratioList[i]['label'];
                         
-                        // Special handling for the first button (Free/Locked toggle)
+                        // Special handling: Show "Locked" if index 0 and locked
                         if (i == 0) {
                           label = _isRatioLocked ? "Locked" : "Free";
-                          // If locked, highlight it red or secondary color to indicate lock state
                         }
 
                         return GestureDetector(
                           onTap: () {
-                            if (i == 0 && _isRatioLocked) {
-                               _toggleLockState(); // Unlock
-                            } else {
-                               _applyRatio(i);
-                            }
+                             if (i == 0 && _isRatioLocked) _toggleLockState();
+                             else _applyRatio(i);
                           },
                           child: Container(
                             padding: EdgeInsets.symmetric(horizontal: 16),
                             alignment: Alignment.center,
                             decoration: BoxDecoration(
-                              color: isSelected ? theme.primary : Colors.white,
-                              border: Border.all(color: isSelected ? theme.primary : Colors.grey[300]!),
+                              color: isSelected ? theme.primary : panelBg,
+                              border: Border.all(color: isSelected ? theme.primary : border),
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: Row(
                               children: [
-                                if (i==0 && _isRatioLocked) ...[Icon(Icons.lock, size:12, color: Colors.white), SizedBox(width:4)],
-                                Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: isSelected ? Colors.white : Colors.grey[600])),
+                                if (i==0 && _isRatioLocked) ...[Icon(Icons.lock, size:12, color: theme.onPrimary), SizedBox(width:4)],
+                                Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: isSelected ? theme.onPrimary : subText)),
                               ],
                             ),
                           ),
@@ -428,7 +427,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
             // Preview
             Expanded(
               child: Container(
-                color: Color(0xFFF1F5F9),
+                color: theme.surfaceContainerHighest,
                 child: LayoutBuilder(
                   builder: (ctx, constraints) {
                     if (_previewImage == null) return Container();
@@ -451,7 +450,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                           child: Stack(
                             children: [
                               Container(
-                                decoration: BoxDecoration(color: Colors.white, boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10)]),
+                                decoration: BoxDecoration(color: panelBg, boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10)]),
                                 child: RawImage(image: _previewImage, fit: BoxFit.contain)
                               ),
                               Positioned(top:0, left:0, right:0, height: _cropRect.top * scale, child: ColoredBox(color: Colors.black54)),
@@ -491,10 +490,10 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
             // Bottom Grid
             Container(
               padding: EdgeInsets.all(24),
-              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(24)), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: Offset(0, -4))]),
+              decoration: BoxDecoration(color: panelBg, borderRadius: BorderRadius.vertical(top: Radius.circular(24)), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: Offset(0, -4))]),
               child: Column(
                 children: [
-                  Row(children: [_buildInput('X', _xCtrl), SizedBox(width: 12), _buildInput('Y', _yCtrl), SizedBox(width: 12), _buildInput('W', _wCtrl), SizedBox(width: 12), _buildInput('H', _hCtrl)]),
+                  Row(children: [_buildInput('X', _xCtrl, theme), SizedBox(width: 12), _buildInput('Y', _yCtrl, theme), SizedBox(width: 12), _buildInput('W', _wCtrl, theme), SizedBox(width: 12), _buildInput('H', _hCtrl, theme)]),
                   SizedBox(height: 16),
                   SizedBox(
                     width: double.infinity, height: 50,
@@ -502,7 +501,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                       onPressed: _savePdf,
                       icon: Icon(Icons.download_rounded, size: 20),
                       label: Text("Export PDF", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                      style: ElevatedButton.styleFrom(backgroundColor: theme.primary, foregroundColor: Colors.white, elevation: 4, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+                      style: ElevatedButton.styleFrom(backgroundColor: theme.primary, foregroundColor: theme.onPrimary, elevation: 4, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
                     ),
                   )
                 ],
@@ -534,15 +533,15 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     return [handle(L, T, 'tl'), handle(cX, T, 't'), handle(R, T, 'tr'), handle(L, cY, 'l'), handle(R, cY, 'r'), handle(L, B, 'bl'), handle(cX, B, 'b'), handle(R, B, 'br')];
   }
 
-  Widget _buildInput(String label, TextEditingController ctrl) {
+  Widget _buildInput(String label, TextEditingController ctrl, ColorScheme theme) {
     return Expanded(
       child: Container(
         padding: EdgeInsets.all(8),
-        decoration: BoxDecoration(color: Colors.grey[50], borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey[200]!)),
+        decoration: BoxDecoration(color: theme.surfaceContainerHighest, borderRadius: BorderRadius.circular(12), border: Border.all(color: theme.outlineVariant.withOpacity(0.2))),
         child: Column(
           children: [
-            Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey[400])),
-            TextField(controller: ctrl, textAlign: TextAlign.center, style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey[800]), decoration: InputDecoration(isDense: true, border: InputBorder.none, contentPadding: EdgeInsets.zero), keyboardType: TextInputType.number, onSubmitted: (_) => _onInputChanged()),
+            Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: theme.onSurfaceVariant)),
+            TextField(controller: ctrl, textAlign: TextAlign.center, style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: theme.onSurface), decoration: InputDecoration(isDense: true, border: InputBorder.none, contentPadding: EdgeInsets.zero), keyboardType: TextInputType.number, onSubmitted: (_) => _onInputChanged()),
           ],
         ),
       ),
