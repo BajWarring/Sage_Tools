@@ -2,19 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-// --- 1. Theme Engine (Matching Tailwind CSS Variables) ---
+// --- 1. Data Models ---
 
 class SageTheme {
   final String id;
   final String name;
-  final MaterialColor primary; // Swatch 50-900
-  final Color background;      // Zinc-50 equivalent
-  final Color surface;         // White
+  final MaterialColor primary;
   
-  SageTheme({required this.id, required this.name, required this.primary, this.background = const Color(0xFFF4F4F5), this.surface = Colors.white});
+  SageTheme({required this.id, required this.name, required this.primary});
 }
 
-// Exact RGB values from your CSS
+// --- 2. Color Swatches ---
+
 final sageSwatch = MaterialColor(0xFF4E924E, {
   50: Color(0xFFF4F9F4), 100: Color(0xFFE3F2E3), 200: Color(0xFFC5E2C5),
   300: Color(0xFF9CCB9C), 400: Color(0xFF72AF72), 500: Color(0xFF4E924E),
@@ -43,21 +42,78 @@ final sunsetSwatch = MaterialColor(0xFFF97316, {
   900: Color(0xFF7C2D12),
 });
 
+final monochromeSwatch = MaterialColor(0xFF525252, {
+  50: Color(0xFFFAFAFA), 100: Color(0xFFF5F5F5), 200: Color(0xFFEEEEEE),
+  300: Color(0xFFE0E0E0), 400: Color(0xFFBDBDBD), 500: Color(0xFF9E9E9E),
+  600: Color(0xFF757575), 700: Color(0xFF616161), 800: Color(0xFF424242),
+  900: Color(0xFF212121),
+});
+
 final themes = [
   SageTheme(id: 'sage', name: 'Sage Green', primary: sageSwatch),
   SageTheme(id: 'ocean', name: 'Ocean Blue', primary: oceanSwatch),
   SageTheme(id: 'royal', name: 'Royal Purple', primary: royalSwatch),
   SageTheme(id: 'sunset', name: 'Sunset Orange', primary: sunsetSwatch),
+  SageTheme(id: 'mono', name: 'Monochrome', primary: monochromeSwatch),
 ];
 
-// --- 2. State Providers ---
+// --- 3. Providers ---
 
-final currentThemeProvider = StateProvider<SageTheme>((ref) => themes[0]);
+// Color Theme Provider
+final currentThemeProvider = StateNotifierProvider<ThemeNotifier, SageTheme>((ref) {
+  return ThemeNotifier();
+});
 
-// Storage Path (Default: Internal)
+class ThemeNotifier extends StateNotifier<SageTheme> {
+  ThemeNotifier() : super(themes[0]) {
+    _load();
+  }
+
+  void _load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final id = prefs.getString('theme_id') ?? 'sage';
+    state = themes.firstWhere((t) => t.id == id, orElse: () => themes[0]);
+  }
+
+  void set(SageTheme theme) async {
+    state = theme;
+    final prefs = await SharedPreferences.getInstance();
+    prefs.setString('theme_id', theme.id);
+  }
+}
+
+// Theme Mode Provider (Light / Dark / System)
+final themeModeProvider = StateNotifierProvider<ThemeModeNotifier, ThemeMode>((ref) {
+  return ThemeModeNotifier();
+});
+
+class ThemeModeNotifier extends StateNotifier<ThemeMode> {
+  ThemeModeNotifier() : super(ThemeMode.system) {
+    _load();
+  }
+
+  void _load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final mode = prefs.getString('theme_mode') ?? 'system';
+    state = _parse(mode);
+  }
+
+  void set(ThemeMode mode) async {
+    state = mode;
+    final prefs = await SharedPreferences.getInstance();
+    prefs.setString('theme_mode', mode.toString().split('.').last);
+  }
+
+  ThemeMode _parse(String val) {
+    if (val == 'light') return ThemeMode.light;
+    if (val == 'dark') return ThemeMode.dark;
+    return ThemeMode.system;
+  }
+}
+
 final storagePathProvider = StateProvider<String>((ref) => '/storage/emulated/0/SageTools');
 
-// --- 3. Data Models ---
+// --- 4. Tool Data ---
 
 class ToolItem {
   final String id;
