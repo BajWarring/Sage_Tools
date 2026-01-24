@@ -10,6 +10,45 @@ class DashboardTab extends ConsumerWidget {
     final theme = ref.watch(currentThemeProvider);
     final p = theme.primary; // shorthand for primary swatch
 
+    // Logic moved here to ensure 'context' is always valid
+    Future<void> _handleToolSelection(String toolId) async {
+      if (toolId == 'crop-pdf') {
+        // 1. Pick File
+        FilePickerResult? result = await FilePicker.platform.pickFiles(
+          type: FileType.custom, 
+          allowedExtensions: ['pdf']
+        );
+        
+        // 2. Navigate (Using Dashboard's persistent context)
+        if (result != null && result.files.single.path != null) {
+          Navigator.push(
+            context, 
+            MaterialPageRoute(builder: (c) => PdfCropScreen(filePath: result.files.single.path!))
+          );
+        }
+      } else {
+        // Placeholder for other tools
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Tool '$toolId' opening soon..."))
+        );
+      }
+    }
+
+    void _showToolModal(ToolItem tool) async {
+      // Wait for the modal to return a Result (ID of the sub-tool)
+      final String? selectedId = await showModalBottomSheet<String>(
+        context: context,
+        backgroundColor: Colors.transparent,
+        isScrollControlled: true,
+        builder: (context) => _ToolModal(tool: tool, ref: ref),
+      );
+
+      // If we got an ID back, handle it
+      if (selectedId != null) {
+        _handleToolSelection(selectedId);
+      }
+    }
+
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: AppBar(
@@ -73,10 +112,10 @@ class DashboardTab extends ConsumerWidget {
               if (i < toolsData.length) {
                 final tool = toolsData[i];
                 return _ToolCard(
-                  title: tool.title.split(' ')[0], // Take first word for simplicity
+                  title: tool.title.split(' ')[0], 
                   icon: tool.icon,
                   color: p,
-                  onTap: () => _showToolModal(context, tool, ref),
+                  onTap: () => _showToolModal(tool),
                 );
               } else {
                 return _ComingSoonCard();
@@ -101,15 +140,6 @@ class DashboardTab extends ConsumerWidget {
           ),
         ],
       ),
-    );
-  }
-
-  void _showToolModal(BuildContext context, ToolItem tool, WidgetRef ref) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (context) => _ToolModal(tool: tool, ref: ref),
     );
   }
 }
@@ -145,14 +175,9 @@ class _ToolModal extends StatelessWidget {
           GridView.count(
             crossAxisCount: 2, shrinkWrap: true, crossAxisSpacing: 12, mainAxisSpacing: 12, childAspectRatio: 2.5,
             children: tool.items.map((sub) => InkWell(
-              onTap: () async {
-                Navigator.pop(context);
-                if (sub.id == 'crop-pdf') {
-                   FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf']);
-                   if (result != null) {
-                     Navigator.push(context, MaterialPageRoute(builder: (c) => PdfCropScreen(filePath: result.files.single.path!)));
-                   }
-                }
+              onTap: () {
+                // FIXED: Just return the ID. Do not try to push routes here.
+                Navigator.pop(context, sub.id);
               },
               borderRadius: BorderRadius.circular(12),
               child: Container(
