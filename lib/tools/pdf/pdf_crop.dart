@@ -132,7 +132,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     });
   }
 
-  // --- The Fix: High-Fidelity Raster Export ---
+  // --- The Fix: Manual Scale Calculation for High-Fidelity Raster Export ---
   Future<void> _savePdf() async {
     setState(() => _isLoading = true);
     try {
@@ -148,15 +148,22 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       int rw = (_cropRect.width * scale).toInt();
       int rh = (_cropRect.height * scale).toInt();
 
-      // 2. Render HIGH RES Image of JUST the crop area (300 DPI equivalent)
-      // Scaling by 3.0 ensures text remains crisp even when rasterized
+      // 2. Render HIGH RES Image (3x Scale)
+      // Logic: To get a 3x resolution crop, we pretend the full page is 3x larger,
+      // then ask for the crop window (also multiplied by 3).
       final doc = await PdfDocument.openFile(widget.filePath);
       final page = await doc.getPage(1);
       
+      final exportScale = 3.0; // High Quality
+      
       final cropImage = await page.render(
-        x: rx, y: ry, width: rw, height: rh, 
-        scale: 3.0, // High quality scale
-        backgroundFill: true // Force white background
+        x: (rx * exportScale).toInt(),
+        y: (ry * exportScale).toInt(),
+        width: (rw * exportScale).toInt(),
+        height: (rh * exportScale).toInt(),
+        fullWidth: page.width * exportScale,
+        fullHeight: page.height * exportScale,
+        backgroundFill: true // Force white background for text visibility
       );
       
       // Convert to bytes for PDF embedding
@@ -168,7 +175,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       // 3. Create PDF and Place Image
       final newDoc = vector.PdfDocument();
       newDoc.pageSettings.margins.all = 0;
-      // Set page size to match the crop shape
+      // Set page size to match the crop shape (in points)
       newDoc.pageSettings.size = Size(rw.toDouble(), rh.toDouble());
       
       final newPage = newDoc.pages.add();
