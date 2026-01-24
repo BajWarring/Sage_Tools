@@ -18,7 +18,6 @@ class ThemeSettingsPage extends ConsumerWidget {
       ),
       body: ListView(
         children: [
-          // 1. Header Info
           Padding(
             padding: const EdgeInsets.all(24.0),
             child: Column(
@@ -31,7 +30,7 @@ class ThemeSettingsPage extends ConsumerWidget {
             ),
           ),
 
-          // 2. Carousel (The "Mobile Preview" Cards)
+          // Carousel
           SizedBox(
             height: 340,
             child: ListView.separated(
@@ -49,7 +48,7 @@ class ThemeSettingsPage extends ConsumerWidget {
                     duration: Duration(milliseconds: 300),
                     width: 180,
                     decoration: BoxDecoration(
-                      color: theme.surfaceContainer,
+                      color: theme.surfaceContainerHigh, // Visible on Dark Mode
                       borderRadius: BorderRadius.circular(32),
                       border: Border.all(
                         color: isSelected ? t.primary : Colors.transparent, 
@@ -63,17 +62,17 @@ class ThemeSettingsPage extends ConsumerWidget {
                       borderRadius: BorderRadius.circular(28),
                       child: Stack(
                         children: [
-                          // -- MOCKUP UI --
+                          // Mockup Content
                           Column(
                             children: [
-                              // Mock Header
+                              // Mock Header (Uses Vibrant Colors)
                               Container(
                                 height: 60, 
-                                color: t.primary[50], // Lightest shade
+                                color: t.primary[50], 
                                 padding: EdgeInsets.all(12),
                                 child: Row(
                                   children: [
-                                    CircleAvatar(radius: 10, backgroundColor: t.primary[100], child: Icon(Icons.person, size: 12, color: t.primary)),
+                                    CircleAvatar(radius: 10, backgroundColor: t.primary[200], child: Icon(Icons.person, size: 12, color: t.primary[800])),
                                     SizedBox(width: 8),
                                     Container(width: 60, height: 8, decoration: BoxDecoration(color: t.primary[200], borderRadius: BorderRadius.circular(4)))
                                   ],
@@ -82,7 +81,7 @@ class ThemeSettingsPage extends ConsumerWidget {
                               // Mock Body
                               Expanded(
                                 child: Container(
-                                  color: Colors.white,
+                                  color: Colors.white, // Inner content area stays white for contrast in preview
                                   padding: EdgeInsets.all(12),
                                   child: Column(
                                     children: [
@@ -112,26 +111,17 @@ class ThemeSettingsPage extends ConsumerWidget {
                                   ),
                                 ),
                               ),
-                              // Mock Label Area
+                              // Label
                               Container(
                                 height: 40,
-                                color: Colors.white,
+                                color: theme.surfaceContainer, // Matches card footer
                                 alignment: Alignment.center,
-                                child: Text(t.name, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey[800])),
+                                child: Text(t.name, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: theme.onSurface)),
                               )
                             ],
                           ),
-                          
-                          // -- Checkmark Overlay --
                           if (isSelected)
-                            Positioned(
-                              top: 12, right: 12,
-                              child: CircleAvatar(
-                                backgroundColor: t.primary,
-                                radius: 12,
-                                child: Icon(Icons.check, size: 16, color: Colors.white),
-                              ),
-                            )
+                            Positioned(top: 12, right: 12, child: CircleAvatar(backgroundColor: t.primary, radius: 12, child: Icon(Icons.check, size: 16, color: Colors.white))),
                         ],
                       ),
                     ),
@@ -143,7 +133,7 @@ class ThemeSettingsPage extends ConsumerWidget {
 
           SizedBox(height: 32),
 
-          // 3. Brightness Mode Selector
+          // Brightness Mode
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24.0),
             child: Column(
@@ -159,31 +149,15 @@ class ThemeSettingsPage extends ConsumerWidget {
                   ),
                   child: Row(
                     children: [
-                      _ModeButton(
-                        label: "System", 
-                        icon: Icons.brightness_auto, 
-                        isSelected: currentMode == ThemeMode.system,
-                        onTap: () => ref.read(themeModeProvider.notifier).set(ThemeMode.system),
-                      ),
-                      _ModeButton(
-                        label: "Light", 
-                        icon: Icons.light_mode, 
-                        isSelected: currentMode == ThemeMode.light,
-                        onTap: () => ref.read(themeModeProvider.notifier).set(ThemeMode.light),
-                      ),
-                      _ModeButton(
-                        label: "Dark", 
-                        icon: Icons.dark_mode, 
-                        isSelected: currentMode == ThemeMode.dark,
-                        onTap: () => ref.read(themeModeProvider.notifier).set(ThemeMode.dark),
-                      ),
+                      _ModeButton(label: "System", icon: Icons.brightness_auto, isSelected: currentMode == ThemeMode.system, onTap: () => ref.read(themeModeProvider.notifier).set(ThemeMode.system)),
+                      _ModeButton(label: "Light", icon: Icons.light_mode, isSelected: currentMode == ThemeMode.light, onTap: () => ref.read(themeModeProvider.notifier).set(ThemeMode.light)),
+                      _ModeButton(label: "Dark", icon: Icons.dark_mode, isSelected: currentMode == ThemeMode.dark, onTap: () => ref.read(themeModeProvider.notifier).set(ThemeMode.dark)),
                     ],
                   ),
                 )
               ],
             ),
           ),
-          
           SizedBox(height: 50),
         ],
       ),
@@ -216,11 +190,7 @@ class _ModeButton extends StatelessWidget {
             children: [
               Icon(icon, size: 20, color: isSelected ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.onSurfaceVariant),
               SizedBox(height: 4),
-              Text(label, style: TextStyle(
-                fontSize: 12, 
-                fontWeight: FontWeight.w600,
-                color: isSelected ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.onSurfaceVariant
-              )),
+              Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isSelected ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.onSurfaceVariant)),
             ],
           ),
         ),
