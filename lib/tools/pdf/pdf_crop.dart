@@ -3,9 +3,9 @@ import 'dart:math';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-// 1. Visual Preview & Rendering Library
+// 1. Visual Preview Library (Screen only)
 import 'package:pdf_render/pdf_render.dart'; 
-// 2. PDF Builder Library (Prefixed)
+// 2. Vector Logic Library (The Real Export Engine)
 import 'package:syncfusion_flutter_pdf/pdf.dart' as vector; 
 import 'package:permission_handler/permission_handler.dart';
 
@@ -20,18 +20,19 @@ class PdfCropScreen extends StatefulWidget {
 class _PdfCropScreenState extends State<PdfCropScreen> {
   // --- State ---
   bool _isLoading = true;
-  ui.Image? _previewImage; // Low-res screen preview
+  ui.Image? _previewImage; // Bitmap for display
   
   // Dimensions
-  Size? _imageSize;     // Size of the preview image
-  Size? _pdfPageSize;   // Size of the actual PDF page
+  Size? _imageSize;     // Size of the bitmap
+  Size? _pdfPageSize;   // Size of the actual vector page (Points)
   
   // Crop Logic
   Rect _cropRect = Rect.zero; 
   bool _isLandscapeRatio = false;
   
   // UX State
-  int _selectedRatioIndex = 0;
+  int _selectedRatioIndex = 0; // 0 = Free
+  bool _isRatioLocked = false;
   String _activeHandle = ''; 
   
   // Controllers
@@ -40,6 +41,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
   final _wCtrl = TextEditingController();
   final _hCtrl = TextEditingController();
 
+  // Ratios
   final List<Map<String, dynamic>> _ratiosPortrait = [
     {'label': 'Free', 'val': null}, {'label': '1:1', 'val': 1.0},
     {'label': '2:3', 'val': 2/3}, {'label': '3:4', 'val': 3/4}, {'label': '9:16', 'val': 9/16},
@@ -57,13 +59,29 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
 
   Future<void> _loadPdfSequence() async {
     try {
+      // 1. Analyze Vector Document (Get Real Dimensions)
+      final bytes = File(widget.filePath).readAsBytesSync();
+      final vDoc = vector.PdfDocument(inputBytes: bytes);
+      final vPage = vDoc.pages[0];
+      
+      // Handle Rotation for accurate mapping
+      int rotation = 0;
+      if (vPage.rotation == vector.PdfPageRotateAngle.rotateAngle90) rotation = 90;
+      else if (vPage.rotation == vector.PdfPageRotateAngle.rotateAngle180) rotation = 180;
+      else if (vPage.rotation == vector.PdfPageRotateAngle.rotateAngle270) rotation = 270;
+
+      if (rotation == 90 || rotation == 270) {
+        _pdfPageSize = Size(vPage.size.height, vPage.size.width);
+      } else {
+        _pdfPageSize = vPage.size;
+      }
+      vDoc.dispose();
+
+      // 2. Render Visual Screenshot
       final doc = await PdfDocument.openFile(widget.filePath);
       final page = await doc.getPage(1);
       
-      // Store real PDF size
-      _pdfPageSize = Size(page.width, page.height);
-
-      // Render Screen Preview (Balanced Quality)
+      // High density render for UI
       int renderW = 1000;
       int renderH = (renderW * (page.height / page.width)).toInt();
       
@@ -92,7 +110,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     }
   }
 
-  // --- Logic ---
+  // --- Logic Methods ---
 
   void _updateControllers() {
     _xCtrl.text = _cropRect.left.toInt().toString();
@@ -114,25 +132,46 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     }
   }
 
+  void _toggleLockState() {
+    setState(() {
+      if (_isRatioLocked) {
+        // Unlock
+        _isRatioLocked = false;
+        _selectedRatioIndex = 0; // Set to "Free"
+      } else {
+        // No action for clicking "Free" directly, users pick a ratio to lock
+      }
+    });
+  }
+
   void _applyRatio(int index) {
     setState(() {
-      _selectedRatioIndex = index;
       var list = _isLandscapeRatio ? _ratiosLandscape : _ratiosPortrait;
       double? ratio = list[index]['val'];
-      if (ratio == null) return;
 
-      double newH = _cropRect.width / ratio;
-      if (_cropRect.top + newH <= _imageSize!.height) {
-        _cropRect = Rect.fromLTWH(_cropRect.left, _cropRect.top, _cropRect.width, newH);
+      if (ratio == null) {
+        // "Free" selected
+        _isRatioLocked = false;
+        _selectedRatioIndex = 0;
       } else {
-        double newW = _cropRect.height * ratio;
-        _cropRect = Rect.fromLTWH(_cropRect.left, _cropRect.top, newW, _cropRect.height);
+        // Specific Ratio -> Lock it
+        _isRatioLocked = true;
+        _selectedRatioIndex = index;
+        
+        // Apply immediately
+        double newH = _cropRect.width / ratio;
+        if (_cropRect.top + newH <= _imageSize!.height) {
+          _cropRect = Rect.fromLTWH(_cropRect.left, _cropRect.top, _cropRect.width, newH);
+        } else {
+          double newW = _cropRect.height * ratio;
+          _cropRect = Rect.fromLTWH(_cropRect.left, _cropRect.top, newW, _cropRect.height);
+        }
       }
       _updateControllers();
     });
   }
 
-  // --- The Fix: Manual Scale Calculation for High-Fidelity Raster Export ---
+  // --- True Vector Export ---
   Future<void> _savePdf() async {
     setState(() => _isLoading = true);
     try {
@@ -143,50 +182,38 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       // 1. Calculate Crop Region in Real PDF Points
       double scale = _pdfPageSize!.width / _imageSize!.width;
       
-      int rx = (_cropRect.left * scale).toInt();
-      int ry = (_cropRect.top * scale).toInt();
-      int rw = (_cropRect.width * scale).toInt();
-      int rh = (_cropRect.height * scale).toInt();
+      double cX = _cropRect.left * scale;
+      double cY = _cropRect.top * scale;
+      double cW = _cropRect.width * scale;
+      double cH = _cropRect.height * scale;
 
-      // 2. Render HIGH RES Image (3x Scale)
-      // Logic: To get a 3x resolution crop, we pretend the full page is 3x larger,
-      // then ask for the crop window (also multiplied by 3).
-      final doc = await PdfDocument.openFile(widget.filePath);
-      final page = await doc.getPage(1);
-      
-      final exportScale = 3.0; // High Quality
-      
-      final cropImage = await page.render(
-        x: (rx * exportScale).toInt(),
-        y: (ry * exportScale).toInt(),
-        width: (rw * exportScale).toInt(),
-        height: (rh * exportScale).toInt(),
-        fullWidth: page.width * exportScale,
-        fullHeight: page.height * exportScale,
-        backgroundFill: true // Force white background for text visibility
-      );
-      
-      // Convert to bytes for PDF embedding
-      final imageBytes = await cropImage.createImageDetached().then(
-        (img) => img.toByteData(format: ui.ImageByteFormat.png)
-      );
-      final uint8Bytes = imageBytes!.buffer.asUint8List();
+      // 2. Load Original Vector PDF
+      final bytes = File(widget.filePath).readAsBytesSync();
+      final loadedDoc = vector.PdfDocument(inputBytes: bytes);
+      final loadedPage = loadedDoc.pages[0];
 
-      // 3. Create PDF and Place Image
+      // 3. Create Destination PDF
       final newDoc = vector.PdfDocument();
       newDoc.pageSettings.margins.all = 0;
-      // Set page size to match the crop shape (in points)
-      newDoc.pageSettings.size = Size(rw.toDouble(), rh.toDouble());
+      newDoc.pageSettings.size = Size(cW, cH);
       
       final newPage = newDoc.pages.add();
-      
-      // Draw the crisp image onto the PDF page
-      newPage.graphics.drawImage(
-        vector.PdfBitmap(uint8Bytes),
-        Rect.fromLTWH(0, 0, rw.toDouble(), rh.toDouble())
+
+      // 4. FIX TEXT VISIBILITY: Draw White Background Layer
+      // This ensures black text on transparent layers is visible
+      newPage.graphics.drawRectangle(
+        bounds: Rect.fromLTWH(0, 0, cW, cH),
+        brush: vector.PdfSolidBrush(vector.PdfColor(255, 255, 255))
       );
 
-      // 4. Save
+      // 5. TRUE VECTOR CROP: Draw Template with Offset
+      // We do NOT render to image. We clone the vector paths.
+      final template = loadedPage.createTemplate();
+      
+      // Draw the template shifted so the cropped area is at (0,0)
+      newPage.graphics.drawPdfTemplate(template, Offset(-cX, -cY));
+
+      // 6. Save
       final downloadsDir = Directory('/storage/emulated/0/Download');
       final saveDir = Directory('${downloadsDir.path}/SageTools');
       if (!await saveDir.exists()) await saveDir.create(recursive: true);
@@ -195,12 +222,14 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       final file = File('${saveDir.path}/$fileName');
       
       await file.writeAsBytes(await newDoc.save());
+      
+      loadedDoc.dispose();
       newDoc.dispose();
 
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text("Saved to Download/SageTools"),
+          content: Text("Saved Vector PDF: $fileName"),
           backgroundColor: Theme.of(context).colorScheme.primary,
           duration: Duration(seconds: 4),
         ));
@@ -213,7 +242,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     }
   }
 
-  // --- Interaction Logic ---
+  // --- Interaction Logic (Handles + Locking) ---
   
   void _onHandlePan(DragUpdateDetails d, String type, double scale) {
     if (_imageSize == null) return;
@@ -230,6 +259,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       double newR = r.right;
       double newB = r.bottom;
 
+      // 1. Body Move
       if (type == 'body') {
         double pL = newL + dx;
         double pT = newT + dy;
@@ -246,11 +276,37 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
         return; 
       }
 
+      // 2. Handle Resizing
       if (type.contains('l')) newL += dx;
       if (type.contains('r')) newR += dx;
       if (type.contains('t')) newT += dy;
       if (type.contains('b')) newB += dy;
 
+      // 3. Aspect Ratio Locking
+      if (_isRatioLocked) {
+        var list = _isLandscapeRatio ? _ratiosLandscape : _ratiosPortrait;
+        double? ratio = list[_selectedRatioIndex]['val'];
+        if (ratio != null) {
+           // If changing width (L/R), force Height
+           if (type.contains('l') || type.contains('r')) {
+              double newW = newR - newL;
+              double newH = newW / ratio;
+              
+              if (type.contains('t')) newT = newB - newH;
+              else newB = newT + newH;
+           } 
+           // If changing height (T/B), force Width
+           else {
+              double newH = newB - newT;
+              double newW = newH * ratio;
+              
+              if (type.contains('l')) newL = newR - newW;
+              else newR = newL + newW;
+           }
+        }
+      }
+
+      // 4. Min Size & Clamping
       if (newR - newL < minS) {
         if (type.contains('l')) newL = newR - minS; else newR = newL + minS;
       }
@@ -311,6 +367,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                         onPressed: () => setState(() {
                           _isLandscapeRatio = !_isLandscapeRatio;
                           _selectedRatioIndex = 0;
+                          _isRatioLocked = false;
                         }),
                         icon: Icon(_isLandscapeRatio ? Icons.crop_landscape : Icons.crop_portrait, size: 16),
                         label: Text(_isLandscapeRatio ? "Landscape" : "Portrait"),
@@ -326,18 +383,39 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                       itemCount: ratioList.length,
                       separatorBuilder: (_,__) => SizedBox(width: 8),
                       itemBuilder: (ctx, i) {
-                        bool isActive = i == _selectedRatioIndex;
+                        bool isSelected = i == _selectedRatioIndex;
+                        // Logic for label: If this index is selected AND it's not "Free" (0), show "Locked"
+                        // But actually user requested: "Free" button becomes "Locked"
+                        String label = ratioList[i]['label'];
+                        
+                        // Special handling for the first button (Free/Locked toggle)
+                        if (i == 0) {
+                          label = _isRatioLocked ? "Locked" : "Free";
+                          // If locked, highlight it red or secondary color to indicate lock state
+                        }
+
                         return GestureDetector(
-                          onTap: () => _applyRatio(i),
+                          onTap: () {
+                            if (i == 0 && _isRatioLocked) {
+                               _toggleLockState(); // Unlock
+                            } else {
+                               _applyRatio(i);
+                            }
+                          },
                           child: Container(
                             padding: EdgeInsets.symmetric(horizontal: 16),
                             alignment: Alignment.center,
                             decoration: BoxDecoration(
-                              color: isActive ? theme.primary : Colors.white,
-                              border: Border.all(color: isActive ? theme.primary : Colors.grey[300]!),
+                              color: isSelected ? theme.primary : Colors.white,
+                              border: Border.all(color: isSelected ? theme.primary : Colors.grey[300]!),
                               borderRadius: BorderRadius.circular(12),
                             ),
-                            child: Text(ratioList[i]['label'], style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: isActive ? Colors.white : Colors.grey[600])),
+                            child: Row(
+                              children: [
+                                if (i==0 && _isRatioLocked) ...[Icon(Icons.lock, size:12, color: Colors.white), SizedBox(width:4)],
+                                Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: isSelected ? Colors.white : Colors.grey[600])),
+                              ],
+                            ),
                           ),
                         );
                       },
