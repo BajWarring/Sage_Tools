@@ -16,8 +16,9 @@ class PdfCropScreen extends StatefulWidget {
 }
 
 class _PdfCropScreenState extends State<PdfCropScreen> {
+  // --- State ---
   bool _isLoading = true;
-  ui.Image? _previewImage;
+  ui.Image? _previewImage; 
   Size? _imageSize;     
   Size? _pdfPageSize;   
   Rect _cropRect = Rect.zero; 
@@ -68,6 +69,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       final page = await doc.getPage(1);
       int renderW = 1000;
       int renderH = (renderW * (page.height / page.width)).toInt();
+      
       final pageImage = await page.render(width: renderW, height: renderH);
       final uiImage = await pageImage.createImageDetached();
       
@@ -109,10 +111,8 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
 
   void _toggleLockState() {
     setState(() {
-      if (_isRatioLocked) {
-        _isRatioLocked = false;
-        _selectedRatioIndex = 0; 
-      }
+      _isRatioLocked = !_isRatioLocked;
+      if (!_isRatioLocked) _selectedRatioIndex = 0;
     });
   }
 
@@ -162,16 +162,15 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       
       final newPage = newDoc.pages.add();
 
-      // --- CRITICAL FIX FOR TEXT VISIBILITY ---
-      // We draw a white rectangle BEHIND the vector content.
-      // This forces transparent text to be visible (black on white).
+      // --- VECTOR FIX: White Background Layer ---
+      // This rectangle acts as a solid base so transparent text becomes visible
       newPage.graphics.drawRectangle(
         bounds: Rect.fromLTWH(0, 0, cW, cH),
         brush: vector.PdfSolidBrush(vector.PdfColor(255, 255, 255)),
-        pen: vector.PdfPen(vector.PdfColor(255, 255, 255), width: 0) // No border
+        pen: vector.PdfPen(vector.PdfColor(255, 255, 255), width: 0)
       );
 
-      // --- VECTOR CLONE ---
+      // --- TRUE VECTOR CONTENT ---
       final template = loadedPage.createTemplate();
       newPage.graphics.drawPdfTemplate(template, Offset(-cX, -cY));
 
@@ -259,7 +258,6 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     final theme = Theme.of(context).colorScheme;
     final ratioList = _isLandscapeRatio ? _ratiosLandscape : _ratiosPortrait;
     
-    // UI Colors
     Color bg = theme.surface;
     Color panelBg = theme.surfaceContainer;
     Color border = theme.outlineVariant.withOpacity(0.2);
@@ -321,12 +319,11 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                       itemBuilder: (ctx, i) {
                         bool isSelected = i == _selectedRatioIndex;
                         String label = ratioList[i]['label'];
-                        // Button changes to "Locked" if locked
                         if (i == 0) label = _isRatioLocked ? "Locked" : "Free";
 
                         return GestureDetector(
                           onTap: () {
-                             if (i == 0 && _isRatioLocked) _toggleLockState();
+                             if (i == 0) _toggleLockState();
                              else _applyRatio(i);
                           },
                           child: Container(
