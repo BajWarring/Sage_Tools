@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:math';
+import 'dart:ui' as ui; // Needed for RawImage
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 // 1. Visual Preview Library
@@ -19,15 +20,15 @@ class PdfCropScreen extends StatefulWidget {
 class _PdfCropScreenState extends State<PdfCropScreen> {
   // --- State ---
   bool _isLoading = true;
-  PdfPageImage? _previewImage; // Bitmap for display
+  ui.Image? _renderedUiImage; // The actual visual image
   
   // Dimensions
-  Size? _imageSize;     // Size of the bitmap
-  Size? _pdfPageSize;   // Size of the vector page (Points)
+  Size? _imageSize;     
+  Size? _pdfPageSize;   
   
   // Crop Logic (Visual Coordinates)
   Rect _cropRect = Rect.zero; 
-  String _orientation = 'portrait';
+  bool _isLandscapeRatio = false; // Toggles the ratio list
   
   // UX State
   int _selectedRatioIndex = 0; // 0 = Free
@@ -39,13 +40,20 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
   final _wCtrl = TextEditingController();
   final _hCtrl = TextEditingController();
 
-  // Configuration
-  final List<Map<String, dynamic>> _ratios = [
+  // Ratios
+  final List<Map<String, dynamic>> _ratiosPortrait = [
     {'label': 'Free', 'val': null},
     {'label': '1:1', 'val': 1.0},
     {'label': '2:3', 'val': 2/3},
     {'label': '3:4', 'val': 3/4},
     {'label': '9:16', 'val': 9/16},
+  ];
+  
+  final List<Map<String, dynamic>> _ratiosLandscape = [
+    {'label': 'Free', 'val': null},
+    {'label': '1:1', 'val': 1.0},
+    {'label': '3:2', 'val': 3/2},
+    {'label': '4:3', 'val': 4/3},
     {'label': '16:9', 'val': 16/9},
   ];
 
@@ -57,12 +65,12 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
 
   Future<void> _loadPdfSequence() async {
     try {
-      // 1. Analyze Vector Document (Dimensions & Rotation)
+      // 1. Analyze Vector Document
       final bytes = File(widget.filePath).readAsBytesSync();
       final vDoc = vector.PdfDocument(inputBytes: bytes);
       final vPage = vDoc.pages[0];
       
-      // Handle Rotation (Swap width/height if rotated 90 or 270)
+      // Handle Rotation
       int rotation = 0;
       if (vPage.rotation == vector.PdfPageRotateAngle.rotateAngle90) rotation = 90;
       else if (vPage.rotation == vector.PdfPageRotateAngle.rotateAngle180) rotation = 180;
@@ -74,22 +82,23 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
         _pdfPageSize = vPage.size;
       }
       
-      _orientation = _pdfPageSize!.width > _pdfPageSize!.height ? 'landscape' : 'portrait';
       vDoc.dispose();
 
       // 2. Render Visual Screenshot
       final doc = await PdfDocument.openFile(widget.filePath);
       final page = await doc.getPage(1);
       
-      // Render at high density (e.g., width 1000px)
+      // High density render
       int renderW = 1000;
       int renderH = (renderW * (page.height / page.width)).toInt();
       
-      final image = await page.render(width: renderW, height: renderH);
+      final pageImage = await page.render(width: renderW, height: renderH);
+      // FIX: Create a dart:ui.Image from the render result
+      final uiImage = await pageImage.createImageDetached();
       
       if (mounted) {
         setState(() {
-          _previewImage = image;
+          _renderedUiImage = uiImage;
           _imageSize = Size(renderW.toDouble(), renderH.toDouble());
           
           // Initial Crop: 80% Center
@@ -131,18 +140,26 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     }
   }
 
+  void _toggleRatioList() {
+    setState(() {
+      _isLandscapeRatio = !_isLandscapeRatio;
+      _selectedRatioIndex = 0; // Reset to free
+    });
+  }
+
   void _applyRatio(int index) {
     setState(() {
       _selectedRatioIndex = index;
-      double? ratio = _ratios[index]['val'];
+      var list = _isLandscapeRatio ? _ratiosLandscape : _ratiosPortrait;
+      double? ratio = list[index]['val'];
+      
       if (ratio == null) return;
 
-      // Keep width, adjust height
+      // Fit to ratio
       double newH = _cropRect.width / ratio;
       if (_cropRect.top + newH <= _imageSize!.height) {
         _cropRect = Rect.fromLTWH(_cropRect.left, _cropRect.top, _cropRect.width, newH);
       } else {
-        // Fit height, adjust width
         double newW = _cropRect.height * ratio;
         _cropRect = Rect.fromLTWH(_cropRect.left, _cropRect.top, newW, _cropRect.height);
       }
@@ -153,7 +170,6 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
   Future<void> _savePdf() async {
     setState(() => _isLoading = true);
     try {
-      // 1. Permission
       if (await Permission.storage.request().isDenied) {
         await Permission.manageExternalStorage.request();
       }
@@ -162,32 +178,30 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       final vDoc = vector.PdfDocument(inputBytes: bytes);
       final vPage = vDoc.pages[0];
 
-      // 2. Math: Calculate Scaling Factor (Visual Pixels -> PDF Points)
+      // Scale Logic
       double scale = _pdfPageSize!.width / _imageSize!.width;
-      
       double cX = _cropRect.left * scale;
       double cY = _cropRect.top * scale;
       double cW = _cropRect.width * scale;
       double cH = _cropRect.height * scale;
 
-      // 3. Create New PDF
+      // Create Destination Doc
       final newDoc = vector.PdfDocument();
       newDoc.pageSettings.margins.all = 0;
       newDoc.pageSettings.size = Size(cW, cH);
-      
       final newPage = newDoc.pages.add();
 
-      // 4. White Background Layer (Fixes Transparency/Black Text issues)
+      // White BG
       newPage.graphics.drawRectangle(
         bounds: Rect.fromLTWH(0, 0, cW, cH),
         brush: vector.PdfSolidBrush(vector.PdfColor(255, 255, 255))
       );
 
-      // 5. Draw Content (Offset to act as crop)
+      // Draw Template (Crop)
       final template = vPage.createTemplate();
       newPage.graphics.drawPdfTemplate(template, Offset(-cX, -cY));
 
-      // 6. Save
+      // Save
       final downloadsDir = Directory('/storage/emulated/0/Download');
       final saveDir = Directory('${downloadsDir.path}/SageTools');
       if (!await saveDir.exists()) await saveDir.create(recursive: true);
@@ -203,9 +217,8 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text("Saved to Downloads/SageTools"),
+          content: Text("Saved: ${file.path}"),
           backgroundColor: Theme.of(context).colorScheme.primary,
-          duration: Duration(seconds: 4),
         ));
       }
 
@@ -216,14 +229,78 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     }
   }
 
-  // --- UI Construction ---
+  // --- Interaction Logic (Clamping & Handles) ---
+  
+  void _onHandlePan(DragUpdateDetails d, String type, double scale) {
+    if (_imageSize == null) return;
+    
+    // Delta in Image Pixels
+    double dx = d.delta.dx / scale;
+    double dy = d.delta.dy / scale;
+    
+    setState(() {
+      Rect r = _cropRect;
+      double minS = 20.0; // Minimum size
+      
+      double newL = r.left;
+      double newT = r.top;
+      double newR = r.right;
+      double newB = r.bottom;
+
+      if (type == 'body') {
+        // Move Body (With Bound Clamping - No Shrink)
+        double proposedLeft = newL + dx;
+        double proposedTop = newT + dy;
+        double w = r.width;
+        double h = r.height;
+
+        // Clamp X
+        if (proposedLeft < 0) proposedLeft = 0;
+        if (proposedLeft + w > _imageSize!.width) proposedLeft = _imageSize!.width - w;
+        
+        // Clamp Y
+        if (proposedTop < 0) proposedTop = 0;
+        if (proposedTop + h > _imageSize!.height) proposedTop = _imageSize!.height - h;
+
+        _cropRect = Rect.fromLTWH(proposedLeft, proposedTop, w, h);
+        _updateControllers();
+        return; 
+      }
+
+      // Resize Handles
+      if (type.contains('l')) newL += dx;
+      if (type.contains('r')) newR += dx;
+      if (type.contains('t')) newT += dy;
+      if (type.contains('b')) newB += dy;
+
+      // Min Size Check
+      if (newR - newL < minS) {
+        if (type.contains('l')) newL = newR - minS;
+        else newR = newL + minS;
+      }
+      if (newB - newT < minS) {
+        if (type.contains('t')) newT = newB - minS;
+        else newB = newT + minS;
+      }
+
+      // Boundary Clamp (Shrink if hitting edge)
+      newL = max(0, newL);
+      newT = max(0, newT);
+      newR = min(_imageSize!.width, newR);
+      newB = min(_imageSize!.height, newB);
+
+      _cropRect = Rect.fromLTRB(newL, newT, newR, newB);
+      _updateControllers();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context).colorScheme;
+    final ratioList = _isLandscapeRatio ? _ratiosLandscape : _ratiosPortrait;
     
     return Scaffold(
-      backgroundColor: Colors.white, // Match HTML
+      backgroundColor: Colors.white,
       appBar: AppBar(
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
@@ -243,28 +320,25 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
         ? Center(child: CircularProgressIndicator()) 
         : Column(
           children: [
-            // --- Top Controls (Auto, Orientation, Ratios) ---
+            // --- Controls ---
             Container(
               padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                border: Border(bottom: BorderSide(color: Colors.grey[100]!))
-              ),
+              decoration: BoxDecoration(color: Colors.white, border: Border(bottom: BorderSide(color: Colors.grey[100]!))),
               child: Column(
                 children: [
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       TextButton.icon(
-                        onPressed: (){},
+                        onPressed: (){}, // Auto placeholder
                         icon: Icon(Icons.auto_fix_high, size: 16),
                         label: Text("Auto Detect"),
                         style: TextButton.styleFrom(foregroundColor: theme.primary),
                       ),
                       OutlinedButton.icon(
-                        onPressed: () {}, // Orientation logic placeholder
-                        icon: Icon(Icons.screen_lock_portrait, size: 16),
-                        label: Text(_orientation == 'portrait' ? "Portrait" : "Landscape"),
+                        onPressed: _toggleRatioList, // Toggle Logic
+                        icon: Icon(_isLandscapeRatio ? Icons.crop_landscape : Icons.crop_portrait, size: 16),
+                        label: Text(_isLandscapeRatio ? "Landscape" : "Portrait"),
                         style: OutlinedButton.styleFrom(
                           foregroundColor: Colors.grey[600],
                           side: BorderSide(color: Colors.grey[300]!),
@@ -278,7 +352,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                     height: 36,
                     child: ListView.separated(
                       scrollDirection: Axis.horizontal,
-                      itemCount: _ratios.length,
+                      itemCount: ratioList.length,
                       separatorBuilder: (_,__) => SizedBox(width: 8),
                       itemBuilder: (ctx, i) {
                         bool isActive = i == _selectedRatioIndex;
@@ -294,12 +368,8 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                               boxShadow: isActive ? [BoxShadow(color: theme.primary.withOpacity(0.3), blurRadius: 4, offset: Offset(0,2))] : []
                             ),
                             child: Text(
-                              _ratios[i]['label'], 
-                              style: TextStyle(
-                                fontSize: 12, 
-                                fontWeight: FontWeight.bold,
-                                color: isActive ? Colors.white : Colors.grey[600]
-                              )
+                              ratioList[i]['label'], 
+                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: isActive ? Colors.white : Colors.grey[600])
                             ),
                           ),
                         );
@@ -310,80 +380,52 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
               ),
             ),
 
-            // --- Main Preview Area ---
+            // --- Preview ---
             Expanded(
               child: Container(
-                color: Color(0xFFF1F5F9), // Slate-100/50 match
+                color: Color(0xFFF1F5F9),
                 child: LayoutBuilder(
                   builder: (ctx, constraints) {
-                    if (_previewImage == null) return Container();
+                    if (_renderedUiImage == null) return Container();
 
-                    // Calculate Aspect Fit
                     double viewW = constraints.maxWidth;
                     double viewH = constraints.maxHeight;
                     double imgW = _imageSize!.width;
                     double imgH = _imageSize!.height;
                     
-                    double scale = min(viewW / imgW, viewH / imgH) * 0.9; // 90% padding
+                    double scale = min(viewW / imgW, viewH / imgH) * 0.9;
                     double displayW = imgW * scale;
                     double displayH = imgH * scale;
                     double offX = (viewW - displayW) / 2;
                     double offY = (viewH - displayH) / 2;
 
-                    return GestureDetector(
-                      onPanUpdate: (d) {
-                        if (_activeHandle == '') return;
-                        
-                        double dx = d.delta.dx / scale;
-                        double dy = d.delta.dy / scale;
-                        
-                        setState(() {
-                          Rect r = _cropRect;
-                          // Basic Body Drag
-                          if (_activeHandle == 'body') {
-                            r = r.shift(Offset(dx, dy));
-                          } 
-                          // Simple Handle Logic (Bottom Right only for brevity, user can add others)
-                          else if (_activeHandle == 'br') {
-                            r = Rect.fromLTRB(r.left, r.top, r.right + dx, r.bottom + dy);
-                          }
-                          // Clamp
-                          double nLeft = max(0, r.left);
-                          double nTop = max(0, r.top);
-                          double nRight = min(imgW, r.right);
-                          double nBottom = min(imgH, r.bottom);
-                          _cropRect = Rect.fromLTWH(nLeft, nTop, nRight - nLeft, nBottom - nTop);
-                          _updateControllers();
-                        });
-                      },
-                      onPanStart: (d) => _activeHandle = 'body',
-                      onPanEnd: (d) => _activeHandle = '',
-                      child: Stack(
-                        children: [
-                          Positioned(
-                            left: offX, top: offY,
-                            width: displayW, height: displayH,
-                            child: Stack(
-                              children: [
-                                // Image
-                                Container(
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10)]
-                                  ),
-                                  child: Image.memory(_previewImage!.pixels, fit: BoxFit.contain)
-                                ),
-                                // Scrims
-                                Positioned(top:0, left:0, right:0, height: _cropRect.top * scale, child: ColoredBox(color: Colors.black54)),
-                                Positioned(bottom:0, left:0, right:0, top: (_cropRect.bottom * scale), child: ColoredBox(color: Colors.black54)),
-                                Positioned(top: _cropRect.top*scale, bottom: (_imageSize!.height - _cropRect.bottom)*scale, left:0, width: _cropRect.left*scale, child: ColoredBox(color: Colors.black54)),
-                                Positioned(top: _cropRect.top*scale, bottom: (_imageSize!.height - _cropRect.bottom)*scale, right:0, left: _cropRect.right*scale, child: ColoredBox(color: Colors.black54)),
-                                // Crop Box
-                                Positioned(
-                                  left: _cropRect.left * scale,
-                                  top: _cropRect.top * scale,
-                                  width: _cropRect.width * scale,
-                                  height: _cropRect.height * scale,
+                    return Stack(
+                      children: [
+                        Positioned(
+                          left: offX, top: offY,
+                          width: displayW, height: displayH,
+                          child: Stack(
+                            children: [
+                              // 1. Image (RawImage FIX for Preview)
+                              Container(
+                                decoration: BoxDecoration(color: Colors.white, boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10)]),
+                                child: RawImage(image: _renderedUiImage, fit: BoxFit.contain)
+                              ),
+                              
+                              // 2. Scrims
+                              Positioned(top:0, left:0, right:0, height: _cropRect.top * scale, child: ColoredBox(color: Colors.black54)),
+                              Positioned(bottom:0, left:0, right:0, top: (_cropRect.bottom * scale), child: ColoredBox(color: Colors.black54)),
+                              Positioned(top: _cropRect.top*scale, bottom: (_imageSize!.height - _cropRect.bottom)*scale, left:0, width: _cropRect.left*scale, child: ColoredBox(color: Colors.black54)),
+                              Positioned(top: _cropRect.top*scale, bottom: (_imageSize!.height - _cropRect.bottom)*scale, right:0, left: _cropRect.right*scale, child: ColoredBox(color: Colors.black54)),
+                              
+                              // 3. Crop Box Body (Draggable)
+                              Positioned(
+                                left: _cropRect.left * scale,
+                                top: _cropRect.top * scale,
+                                width: _cropRect.width * scale,
+                                height: _cropRect.height * scale,
+                                child: GestureDetector(
+                                  onPanUpdate: (d) => _onHandlePan(d, 'body', scale),
                                   child: Container(
                                     decoration: BoxDecoration(border: Border.all(color: theme.primary, width: 2)),
                                     child: Stack(
@@ -391,37 +433,25 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                                         // Grid
                                         Column(children: [Spacer(), Divider(color: Colors.white30, height:1), Spacer(), Divider(color: Colors.white30, height:1), Spacer()]),
                                         Row(children: [Spacer(), VerticalDivider(color: Colors.white30, width:1), Spacer(), VerticalDivider(color: Colors.white30, width:1), Spacer()]),
-                                        // Handle (Bottom Right)
-                                        Positioned(
-                                          right: -6, bottom: -6,
-                                          child: GestureDetector(
-                                            onPanStart: (d) => _activeHandle = 'br',
-                                            child: Container(
-                                              width: 12, height: 12,
-                                              decoration: BoxDecoration(
-                                                color: theme.primary,
-                                                shape: BoxShape.circle,
-                                                border: Border.all(color: Colors.white, width: 2)
-                                              ),
-                                            ),
-                                          ),
-                                        )
                                       ],
                                     ),
                                   ),
-                                )
-                              ],
-                            ),
-                          )
-                        ],
-                      ),
+                                ),
+                              ),
+
+                              // 4. Handles (8 Points)
+                              ..._buildHandles(scale, theme.primary),
+                            ],
+                          ),
+                        )
+                      ],
                     );
                   },
                 ),
               ),
             ),
 
-            // --- Bottom Panel ---
+            // --- Bottom Grid ---
             Container(
               padding: EdgeInsets.all(24),
               decoration: BoxDecoration(
@@ -463,15 +493,52 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     );
   }
 
+  // --- Helper: Build 8 Handles ---
+  List<Widget> _buildHandles(double scale, Color color) {
+    // Coordinates
+    double L = _cropRect.left * scale;
+    double T = _cropRect.top * scale;
+    double R = _cropRect.right * scale;
+    double B = _cropRect.bottom * scale;
+    double cX = L + (_cropRect.width * scale / 2);
+    double cY = T + (_cropRect.height * scale / 2);
+    double size = 24.0; // Touch area
+    double dot = 12.0;  // Visual area
+
+    Widget handle(double x, double y, String type) {
+      return Positioned(
+        left: x - (size/2), top: y - (size/2),
+        width: size, height: size,
+        child: GestureDetector(
+          onPanUpdate: (d) => _onHandlePan(d, type, scale),
+          child: Container(
+            alignment: Alignment.center,
+            color: Colors.transparent,
+            child: Container(
+              width: dot, height: dot,
+              decoration: BoxDecoration(
+                color: color,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2)
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return [
+      handle(L, T, 'tl'), handle(cX, T, 't'), handle(R, T, 'tr'),
+      handle(L, cY, 'l'), handle(R, cY, 'r'),
+      handle(L, B, 'bl'), handle(cX, B, 'b'), handle(R, B, 'br'),
+    ];
+  }
+
   Widget _buildInput(String label, TextEditingController ctrl) {
     return Expanded(
       child: Container(
         padding: EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: Colors.grey[50], // Slate-50
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.grey[200]!)
-        ),
+        decoration: BoxDecoration(color: Colors.grey[50], borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey[200]!)),
         child: Column(
           children: [
             Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey[400])),
