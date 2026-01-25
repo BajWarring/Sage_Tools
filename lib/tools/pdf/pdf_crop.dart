@@ -22,7 +22,6 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
   ui.Image? _previewImage; 
   Size? _imageSize;     
   Size? _pdfPageSize;   
-  int _pageRotation = 0;
   
   // Logic
   Rect _cropRect = Rect.zero; 
@@ -56,14 +55,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       final vDoc = vector.PdfDocument(inputBytes: bytes);
       final vPage = vDoc.pages[0];
       
-      // Get Rotation
-      if (vPage.rotation == vector.PdfPageRotateAngle.rotateAngle90) _pageRotation = 90;
-      else if (vPage.rotation == vector.PdfPageRotateAngle.rotateAngle180) _pageRotation = 180;
-      else if (vPage.rotation == vector.PdfPageRotateAngle.rotateAngle270) _pageRotation = 270;
-      else _pageRotation = 0;
-
-      // Store RAW physical size (before rotation swap)
-      // This is crucial for the Y-Axis math later
+      // Store RAW size. We removed the complex rotation logic as requested.
       _pdfPageSize = vPage.size;
       vDoc.dispose();
 
@@ -149,54 +141,19 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     });
   }
 
-  // --- 1. COORDINATE MATH FIX ---
-  Rect _calculatePdfRect(Rect visualRect) {
-    // Determine the "Visual" dimensions vs "Physical" dimensions
-    // If Rotated 90/270, Visual Width maps to Physical Height
-    double physW = _pdfPageSize!.width;
-    double physH = _pdfPageSize!.height;
-    
-    double scaleX, scaleY;
-    if (_pageRotation == 90 || _pageRotation == 270) {
-      scaleX = physH / _imageSize!.width;
-      scaleY = physW / _imageSize!.height;
-    } else {
-      scaleX = physW / _imageSize!.width;
-      scaleY = physH / _imageSize!.height;
-    }
+  // --- 1. SIMPLIFIED PHYSICAL RECT CALCULATION ---
+  // Removed all complex rotation switching logic as requested.
+  // We simply scale visual pixels to PDF points.
+  Rect _calculatePhysicalRect(Rect visualRect) {
+    double scaleX = _pdfPageSize!.width / _imageSize!.width;
+    double scaleY = _pdfPageSize!.height / _imageSize!.height;
 
-    double vx = visualRect.left * scaleX;
-    double vy = visualRect.top * scaleY;
-    double vw = visualRect.width * scaleX;
-    double vh = visualRect.height * scaleY;
+    double x = visualRect.left * scaleX;
+    double y = visualRect.top * scaleY;
+    double w = visualRect.width * scaleX;
+    double h = visualRect.height * scaleY;
 
-    // --- KEY FIX: COORDINATE SYSTEM INVERSION ---
-    // PDF (0,0) is Bottom-Left. Visual (0,0) is Top-Left.
-    // We must map Visual coordinates to Physical PDF coordinates.
-    // AND account for rotation which spins the axis.
-    
-    if (_pageRotation == 0) {
-      // 0 Deg: X is X. Y is Inverted.
-      // PDF_Y = Height - Visual_Y - Visual_Height
-      return Rect.fromLTWH(vx, physH - vy - vh, vw, vh);
-    } 
-    else if (_pageRotation == 90) {
-      // 90 Deg CW: 
-      // Visual Top (0) -> Physical Left (0).
-      // Visual Left (0) -> Physical Bottom (0).
-      // X = vy
-      // Y = vx ? No.
-      // Let's use the Visual Box Size (vw, vh) as the new Page Size.
-      // And we offset the template. 
-      // Offset Calculation:
-      // To show the region at (vx, vy) visually:
-      // We need to shift the PDF page so that point becomes (0,0).
-      
-      // Let's return the Raw Visual Rect (Scaled) and handle logic in Save.
-      return Rect.fromLTWH(vx, vy, vw, vh); 
-    }
-    // Fallback for others, return scaled visual
-    return Rect.fromLTWH(vx, vy, vw, vh);
+    return Rect.fromLTWH(x, y, w, h);
   }
 
   Future<void> _savePdf() async {
@@ -208,76 +165,34 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       final loadedDoc = vector.PdfDocument(inputBytes: bytes);
       final loadedPage = loadedDoc.pages[0];
 
-      // Get Scaled Values
-      double physW = loadedPage.size.width;
-      double physH = loadedPage.size.height;
-      double scale = 1.0;
-      
-      // Determine Scale Factor based on orientation
-      if (_pageRotation == 90 || _pageRotation == 270) {
-         scale = physH / _imageSize!.width; // Width is actually Height in phys
-      } else {
-         scale = physW / _imageSize!.width;
-      }
-
-      double vX = _cropRect.left * scale;
-      double vY = _cropRect.top * scale;
-      double vW = _cropRect.width * scale;
-      double vH = _cropRect.height * scale;
+      // 1. Get Physical Rect
+      Rect physRect = _calculatePhysicalRect(_cropRect);
 
       // 2. Create New Document
       final newDoc = vector.PdfDocument();
       newDoc.pageSettings.margins.all = 0;
       
-      // Set Size to the Visual Crop Size
-      newDoc.pageSettings.size = Size(vW, vH);
+      // Set new page size to exactly the crop size
+      newDoc.pageSettings.size = Size(physRect.width, physRect.height);
       
-      // --- 2. ROTATION RESTORATION FIX ---
-      // Restore the original rotation tag. This tells the viewer "Turn this 90 deg".
-      newDoc.pageSettings.rotate = loadedPage.rotation;
-
       final newPage = newDoc.pages.add();
+
+      // --- 3. FIX TEXT VISIBILITY (White Background) ---
+      // We draw a white rectangle first to ensure transparent text has a background.
+      newPage.graphics.drawRectangle(
+        bounds: Rect.fromLTWH(0, 0, physRect.width, physRect.height),
+        brush: vector.PdfSolidBrush(vector.PdfColor(255, 255, 255)),
+        pen: vector.PdfPen(vector.PdfColor(255, 255, 255), width: 0)
+      );
+
+      // --- 4. DRAW TEMPLATE (With Y-Axis Fix if needed) ---
       final template = loadedPage.createTemplate();
-
-      // --- 3. OFFSET CALCULATION (THE "WRONG AREA" FIX) ---
-      // We need to shift the original page so our crop area is visible.
-      // The shift depends on the rotation because the axes are spun.
       
-      double offsetX = 0;
-      double offsetY = 0;
+      // Default: Shift Top-Left (-x, -y)
+      double offsetX = -physRect.left;
+      double offsetY = -physRect.top;
 
-      if (_pageRotation == 0) {
-         // Portrait: Shift Left by X, Shift Down by (PDF_H - Y - H) ??
-         // No, Syncfusion coords usually start Top-Left for Drawing.
-         // So: Shift Left by X, Shift Up by Y.
-         offsetX = -vX;
-         offsetY = -vY;
-      } 
-      else if (_pageRotation == 90) {
-         // 90 Deg (Landscape):
-         // Visual X (Left-Right) maps to Physical Y (Bottom-Top).
-         // Visual Y (Top-Down) maps to Physical X (Left-Right).
-         // To crop "Top Left" visually:
-         // We need the Physical "Left Top" area.
-         // In 90deg PDF, that is near (0,0) ??
-         
-         // Fix: Just treat (vX, vY) as the offset into the rotated view.
-         // If we propagate rotation, we just use the Visual Offset directly.
-         offsetX = -vX;
-         offsetY = -vY;
-         
-         // SWAP Page Size dimensions if rotated, because 'Size' is pre-rotation
-         newDoc.pageSettings.size = Size(vH, vW); 
-      }
-      else if (_pageRotation == 180) {
-         offsetX = -vX; offsetY = -vY;
-      }
-      else if (_pageRotation == 270) {
-         offsetX = -vX; offsetY = -vY;
-         newDoc.pageSettings.size = Size(vH, vW);
-      }
-
-      // Draw with Offset
+      // Draw content
       newPage.graphics.drawPdfTemplate(template, Offset(offsetX, offsetY));
 
       // Save
@@ -314,7 +229,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     }
   }
 
-  // --- 4. SQUISH FIX (ALL OR NOTHING) ---
+  // --- 5. SQUISH FIX (HARD STOP) ---
   void _onHandlePan(DragUpdateDetails d, String type, double scale) {
     if (_imageSize == null) return;
     double dx = d.delta.dx / scale;
@@ -323,6 +238,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     setState(() {
       Rect r = _cropRect;
       double minS = 20.0;
+      
       double newL = r.left, newT = r.top, newR = r.right, newB = r.bottom;
 
       if (type == 'body') {
@@ -337,6 +253,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
         return; 
       }
 
+      // Initial proposed move
       if (type.contains('l')) newL += dx;
       if (type.contains('r')) newR += dx;
       if (type.contains('t')) newT += dy;
@@ -347,32 +264,48 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
         double? ratio = list[_selectedRatioIndex]['val'];
         if (ratio != null) {
            bool drivingW = type.contains('l') || type.contains('r');
+           
            if (drivingW) {
-              double propW = newR - newL;
-              double reqH = propW / ratio;
+              double proposedW = newR - newL;
+              double reqH = proposedW / ratio;
               double center = r.top + r.height/2;
-              double pT = type.contains('t') ? newB - reqH : (type.contains('b') ? newT : center - reqH/2);
-              double pB = type.contains('b') ? newT + reqH : (type.contains('t') ? newT : center + reqH/2);
               
-              // ALL OR NOTHING CHECK
-              if (pT < 0 || pB > _imageSize!.height || newL < 0 || newR > _imageSize!.width) return;
+              double pT = type.contains('t') ? newB - reqH : (type.contains('b') ? newT : center - reqH/2);
+              double pB = type.contains('b') ? newT + reqH : (type.contains('t') ? newT : center + reqH / 2);
+              
+              // HARD STOP: If any dimension hits wall, CANCEL entire move
+              if (pT < 0 || pB > _imageSize!.height || newL < 0 || newR > _imageSize!.width) {
+                 return; 
+              }
               newT = pT; newB = pB;
            } else {
-              double propH = newB - newT;
-              double reqW = propH * ratio;
+              double proposedH = newB - newT;
+              double reqW = proposedH * ratio;
               double center = r.left + r.width/2;
+              
               double pL = type.contains('l') ? newR - reqW : (type.contains('r') ? newL : center - reqW/2);
               double pR = type.contains('r') ? newL + reqW : (type.contains('l') ? newL : center + reqW/2);
               
-              // ALL OR NOTHING CHECK
-              if (pL < 0 || pR > _imageSize!.width || newT < 0 || newB > _imageSize!.height) return;
+              // HARD STOP
+              if (pL < 0 || pR > _imageSize!.width || newT < 0 || newB > _imageSize!.height) {
+                 return;
+              }
               newL = pL; newR = pR;
            }
         }
       }
 
       if (newR - newL < minS || newB - newT < minS) return;
-      if (newL < 0 || newT < 0 || newR > _imageSize!.width || newB > _imageSize!.height) return;
+      
+      // Final Clamp Check (For free mode)
+      if (!_isRatioLocked) {
+         newL = max(0, newL); newT = max(0, newT);
+         newR = min(_imageSize!.width, newR); newB = min(_imageSize!.height, newB);
+      } else {
+         // In locked mode, if we passed the earlier check, we are safe. 
+         // But double check to be sure we don't drift.
+         if (newL < 0 || newT < 0 || newR > _imageSize!.width || newB > _imageSize!.height) return;
+      }
 
       _cropRect = Rect.fromLTRB(newL, newT, newR, newB);
       _updateControllers();
@@ -430,10 +363,13 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                         bool isSelected = i == _selectedRatioIndex;
                         String label = ratioList[i]['label'];
                         IconData? icon;
+                        
+                        // "Locked" Button Logic
                         if (i == 0) {
                           label = "";
                           icon = _isRatioLocked ? Icons.lock : Icons.lock_open;
                         }
+
                         return GestureDetector(
                           onTap: () {
                             if (i == 0) _toggleLockState();
@@ -443,8 +379,18 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                             width: i == 0 ? 50 : null,
                             padding: EdgeInsets.symmetric(horizontal: 16),
                             alignment: Alignment.center,
-                            decoration: BoxDecoration(color: isSelected ? theme.primary : panelBg, border: Border.all(color: isSelected ? theme.primary : border), borderRadius: BorderRadius.circular(12)),
-                            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [if (icon != null) Icon(icon, size: 16, color: isSelected ? theme.onPrimary : subText), if (label.isNotEmpty) Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: isSelected ? theme.onPrimary : subText))]),
+                            decoration: BoxDecoration(
+                              color: isSelected ? theme.primary : panelBg,
+                              border: Border.all(color: isSelected ? theme.primary : border),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                if (icon != null) Icon(icon, size: 16, color: isSelected ? theme.onPrimary : subText),
+                                if (label.isNotEmpty) Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: isSelected ? theme.onPrimary : subText)),
+                              ],
+                            ),
                           ),
                         );
                       },
