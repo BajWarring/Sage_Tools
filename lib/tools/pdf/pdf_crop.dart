@@ -222,27 +222,16 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       // 4. Draw Template
       final template = loadedPage.createTemplate();
 final g = newPage.graphics;
-
-// 4.1. Save graphics state
-g.save();
-
-// 4.2. Define clipping path (rectangle)
-g.drawRectangle(
-  bounds: Rect.fromLTWH(0, 0, physRect.width, physRect.height),
-);
-
-// 4.3. Activate clip (NO arguments)
-g.setClip();
-
-// 4.4. Draw shifted original page
 g.drawPdfTemplate(
   template,
-  Offset(-physRect.left, -physRect.top),
+  Offset.zero,
+  Rect.fromLTWH(
+    physRect.left,
+    physRect.top,
+    physRect.width,
+    physRect.height,
+  ),
 );
-
-// 4.5. Restore graphics state
-g.restore();
-
       final downloadsDir = Directory('/storage/emulated/0/Download');
       final saveDir = Directory('${downloadsDir.path}/SageTools');
       if (!await saveDir.exists()) await saveDir.create(recursive: true);
