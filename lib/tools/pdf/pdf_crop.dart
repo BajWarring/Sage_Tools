@@ -221,9 +221,22 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
 
       // 4. Draw Template
       final template = loadedPage.createTemplate();
-      
-      // Shift so the cropped area is at (0,0)
-      newPage.graphics.drawPdfTemplate(template, Offset(-physRect.left, -physRect.top));
+final g = newPage.graphics;
+
+// 4.1 Define clip rectangle (true vector clip)
+g.save();
+g.setClip(
+  Rect.fromLTWH(0, 0, physRect.width, physRect.height),
+);
+
+// 4.2 Draw shifted original page INSIDE clip
+g.drawPdfTemplate(
+  template,
+  Offset(-physRect.left, -physRect.top),
+);
+
+// 4.3 Restore graphics state (VERY important)
+g.restore();
 
       final downloadsDir = Directory('/storage/emulated/0/Download');
       final saveDir = Directory('${downloadsDir.path}/SageTools');
