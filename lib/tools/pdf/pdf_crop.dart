@@ -223,19 +223,24 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       final template = loadedPage.createTemplate();
 final g = newPage.graphics;
 
-// 4.1 Define clip rectangle (true vector clip)
+// 4.1. Save graphics state
 g.save();
-g.setClip(
-  Rect.fromLTWH(0, 0, physRect.width, physRect.height),
+
+// 4.2. Define clipping path (rectangle)
+g.drawRectangle(
+  bounds: Rect.fromLTWH(0, 0, physRect.width, physRect.height),
 );
 
-// 4.2 Draw shifted original page INSIDE clip
+// 4.3. Activate clip (NO arguments)
+g.setClip();
+
+// 4.4. Draw shifted original page
 g.drawPdfTemplate(
   template,
   Offset(-physRect.left, -physRect.top),
 );
 
-// 4.3 Restore graphics state (VERY important)
+// 4.5. Restore graphics state
 g.restore();
 
       final downloadsDir = Directory('/storage/emulated/0/Download');
