@@ -22,7 +22,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /opt/hostedtoolcache/flutter
-          key: flutter-3.24.0-ubuntu-latest
+          key: flutter-3.27.4-ubuntu-latest
 
       # Updated Flutter Version to 3.24.0 (Supports Material 3 containers)
       - name: Setup Flutter
