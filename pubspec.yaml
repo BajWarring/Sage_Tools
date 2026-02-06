@@ -38,6 +38,8 @@ dependencies:
   file_picker: ^8.0.0
   pdf_render: ^1.1.2
   syncfusion_flutter_pdf: ^24.1.41 # Allows vector manipulation
+  pdfx: ^2.6.0 # New pdf library
+  pdf: ^3.10.4
   permission_handler: ^11.3.0
   shared_preferences: ^2.2.2
 
