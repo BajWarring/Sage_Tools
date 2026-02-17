@@ -5,9 +5,9 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
-// 1. Compatible Renderer (Compiled in Build #34)
+// 1. STABLE RENDERER (Compiles on your setup)
 import 'package:pdf_render/pdf_render.dart'; 
-// 2. Standard PDF Creator ("PDF Box" logic)
+// 2. STANDARD PDF WRITER
 import 'package:pdf/pdf.dart' as pw_core;
 import 'package:pdf/widgets.dart' as pw;
 import 'package:permission_handler/permission_handler.dart';
@@ -23,10 +23,10 @@ class PdfCropScreen extends StatefulWidget {
 class _PdfCropScreenState extends State<PdfCropScreen> {
   // --- State ---
   bool _isLoading = true;
-  ui.Image? _previewImage; // Visual Preview
-  Uint8List? _highResBytes; // High Quality Bytes for Export
-  Size? _imageSize; // Visual Size on Screen
-  Size? _pageSize;  // Actual Pixel Size of the Render
+  ui.Image? _previewImage; 
+  Uint8List? _highResBytes; 
+  Size? _imageSize; // Visual Size
+  Size? _pageSize;  // Physical Pixel Size
   
   // Logic
   Rect _cropRect = Rect.zero; 
@@ -56,19 +56,20 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
 
   Future<void> _loadPdfSequence() async {
     try {
-      // 1. Open PDF with pdf_render (Robust & Compatible)
+      // 1. Open PDF using pdf_render (Stable)
       final doc = await PdfDocument.openFile(widget.filePath);
       final page = await doc.getPage(1);
       
-      // 2. Render High-Res Image (Scale 2.0 = ~144 DPI, good for text)
-      // This "bakes" the rotation and fonts into pixels, solving the "Missing Text" & "Flip" bugs.
+      // 2. Render to High-Res Image (Scale 2.0 ensures crisp text)
+      // This solves the "Missing Text" & "Rotation" bugs instantly.
+      // The renderer returns the image exactly as it looks (WYSIWYG).
       int width = (page.width * 2).toInt();
       int height = (page.height * 2).toInt();
       
       final pageImage = await page.render(width: width, height: height);
       final uiImage = await pageImage.createImageDetached();
       
-      // Convert to Bytes for the PDF Generator
+      // Convert to PNG bytes for the Writer
       final byteData = await uiImage.toByteData(format: ui.ImageByteFormat.png);
       final bytes = byteData!.buffer.asUint8List();
 
@@ -78,8 +79,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
           _highResBytes = bytes;
           _pageSize = Size(width.toDouble(), height.toDouble());
           
-          // Setup View Size (will be refined in LayoutBuilder)
-          // Default: Match Aspect Ratio
+          // Initial Visual Size (will be updated in LayoutBuilder)
           _imageSize = Size(width.toDouble(), height.toDouble());
           
           // Initial Crop: 80% Center
@@ -100,8 +100,6 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
   }
 
   void _updateControllers() {
-    // Map Physical -> Visual for UI? 
-    // Actually, let's keep controllers in Physical Pixels for precision
     _xCtrl.text = _cropRect.left.toInt().toString();
     _yCtrl.text = _cropRect.top.toInt().toString();
     _wCtrl.text = _cropRect.width.toInt().toString();
@@ -137,7 +135,6 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
         _isRatioLocked = true;
         _selectedRatioIndex = index;
         
-        // Calculate based on Physical Size
         double currentW = _cropRect.width;
         double newH = currentW / ratio;
         
@@ -152,7 +149,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     });
   }
 
-  // --- SAVE: VISUAL CROP STRATEGY ---
+  // --- SAVE LOGIC (WYSIWYG) ---
   Future<void> _savePdf() async {
     if (_highResBytes == null) return;
     setState(() => _isLoading = true);
@@ -162,14 +159,12 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
 
       // 1. Create PDF
       final pdf = pw.Document();
-      
-      // 2. Define Page Logic
-      // We use the Crop Dimensions as the Page Size.
-      // We draw the FULL image shifted negatively (Offset) to reveal the crop.
-      // Since _highResBytes is already rotated/rendered correctly, 0,0 is Top Left.
-      
       final pdfImage = pw.MemoryImage(_highResBytes!);
       
+      // 2. Define Page
+      // Page size matches the CROP size exactly.
+      // We draw the FULL image, but shifted negatively so the crop area is visible.
+      // This mimics "Cropping" perfectly.
       pdf.addPage(
         pw.Page(
           pageFormat: pw_core.PdfPageFormat(_cropRect.width, _cropRect.height, marginAll: 0),
@@ -177,13 +172,13 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
             return pw.Stack(
               children: [
                 pw.Positioned(
-                  left: -_cropRect.left, // Shift image left
-                  top: -_cropRect.top,   // Shift image up
+                  left: -_cropRect.left,
+                  top: -_cropRect.top,
                   child: pw.Image(
                     pdfImage,
                     width: _pageSize!.width,
                     height: _pageSize!.height,
-                    fit: pw.BoxFit.none // Exact pixels, no scaling
+                    fit: pw.BoxFit.none // No scaling, exact pixels
                   ),
                 )
               ]
@@ -192,7 +187,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
         ),
       );
 
-      // 3. Save File
+      // 3. Save
       Directory? directory;
       if (Platform.isAndroid) {
         directory = Directory('/storage/emulated/0/Download');
@@ -224,21 +219,17 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     }
   }
 
-  // --- INTERACTION: HARD STOP (NO SQUISH) ---
+  // --- RESIZE LOGIC (HARD STOP) ---
   void _onHandlePan(DragUpdateDetails d, String type, double scale) {
     if (_pageSize == null) return;
     
-    // Scale d.delta by the View-to-Physical ratio
-    // scale passed in is usually viewScale. We need to convert touch delta to pixels.
-    // Actually, in the build method below, we passed scale=1.0 for the Stack?
-    // Let's rely on the scale passed from the LayoutBuilder
-    
+    // Convert touch delta to physical pixels
     double dx = d.delta.dx / scale;
     double dy = d.delta.dy / scale;
     
     setState(() {
       Rect r = _cropRect;
-      double minS = 50.0; // Min 50 pixels
+      double minS = 50.0;
       
       double newL = r.left, newT = r.top, newR = r.right, newB = r.bottom;
 
@@ -273,7 +264,6 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
               double pT = type.contains('t') ? newB - reqH : (type.contains('b') ? newT : center - reqH/2);
               double pB = type.contains('b') ? newT + reqH : (type.contains('t') ? newT : center + reqH / 2);
               
-              // HARD STOP: If bounds hit, cancel move
               if (pT < 0 || pB > _pageSize!.height || newL < 0 || newR > _pageSize!.width) return;
               newT = pT; newB = pB;
            } else {
@@ -283,7 +273,6 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
               double pL = type.contains('l') ? newR - reqW : (type.contains('r') ? newL : center - reqW/2);
               double pR = type.contains('r') ? newL + reqW : (type.contains('l') ? newL : center + reqW/2);
               
-              // HARD STOP
               if (pL < 0 || pR > _pageSize!.width || newT < 0 || newB > _pageSize!.height) return;
               newL = pL; newR = pR;
            }
@@ -373,15 +362,11 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                   builder: (ctx, constraints) {
                     if (_previewImage == null) return Container();
                     
-                    // Determine Scale to fit image in view
                     double viewW = constraints.maxWidth;
                     double viewH = constraints.maxHeight;
                     double imgW = _pageSize!.width;
                     double imgH = _pageSize!.height;
-                    
-                    // Scale factor: View Pixels / Physical Pixels
                     double scale = min(viewW / imgW, viewH / imgH) * 0.9;
-                    
                     double displayW = imgW * scale;
                     double displayH = imgH * scale;
                     double offX = (viewW - displayW) / 2;
@@ -394,19 +379,13 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                           child: Stack(
                             children: [
                               Container(decoration: BoxDecoration(color: panelBg, boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10)]), child: RawImage(image: _previewImage, fit: BoxFit.contain)),
-                              // Overlay logic: We use Scale to map Visual Rect to Physical Rect
                               Positioned(top: 0, left: 0, right: 0, height: _cropRect.top * scale, child: ColoredBox(color: Colors.black54)),
                               Positioned(bottom: 0, left: 0, right: 0, top: (_cropRect.bottom * scale), child: ColoredBox(color: Colors.black54)),
                               Positioned(top: _cropRect.top * scale, bottom: (_pageSize!.height - _cropRect.bottom) * scale, left: 0, width: _cropRect.left * scale, child: ColoredBox(color: Colors.black54)),
                               Positioned(top: _cropRect.top * scale, bottom: (_pageSize!.height - _cropRect.bottom) * scale, right: 0, left: _cropRect.right * scale, child: ColoredBox(color: Colors.black54)),
-                              
                               Positioned(
-                                left: _cropRect.left * scale,
-                                top: _cropRect.top * scale,
-                                width: _cropRect.width * scale,
-                                height: _cropRect.height * scale,
+                                left: _cropRect.left * scale, top: _cropRect.top * scale, width: _cropRect.width * scale, height: _cropRect.height * scale,
                                 child: GestureDetector(
-                                  // Pass the correct scale so pan logic converts Touch -> Physical
                                   onPanUpdate: (d) => _onHandlePan(d, 'body', scale),
                                   child: Container(
                                     decoration: BoxDecoration(border: Border.all(color: theme.primary, width: 2)),
