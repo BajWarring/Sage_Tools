@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import '../core.dart';
 import '../tools/pdf/pdf_crop.dart';
+import '../tools/dev/git_grabber.dart';
 
 class DashboardTab extends ConsumerWidget {
   @override
@@ -17,10 +18,14 @@ class DashboardTab extends ConsumerWidget {
         if (result != null && result.files.single.path != null) {
           Navigator.push(context, MaterialPageRoute(builder: (c) => PdfCropScreen(filePath: result.files.single.path!)));
         }
+      } else if (toolId == 'git-grabber') {
+        // <--- NEW LINK ADDED HERE
+        Navigator.push(context, MaterialPageRoute(builder: (c) => GitGrabberScreen()));
       } else {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Tool '$toolId' opening soon...")));
       }
     }
+
 
     void _showToolModal(ToolItem tool) async {
       final String? selectedId = await showModalBottomSheet<String>(
