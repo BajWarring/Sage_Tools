@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+// --- 1. Data Models ---
 class SageTheme {
   final String id;
   final String name;
@@ -18,6 +19,7 @@ class SageTheme {
   });
 }
 
+// --- 2. Color Swatches ---
 final sageSwatch = MaterialColor(0xFF4E924E, {
   50: Color(0xFFF4F9F4), 100: Color(0xFFE3F2E3), 200: Color(0xFFC5E2C5),
   300: Color(0xFF9CCB9C), 400: Color(0xFF72AF72), 500: Color(0xFF4E924E),
@@ -57,6 +59,7 @@ final themes = [
   SageTheme(id: 'mono', name: 'Monochrome', primary: monochromeSwatch),
 ];
 
+// --- 3. Providers ---
 final currentThemeProvider = StateNotifierProvider<ThemeNotifier, SageTheme>((ref) => ThemeNotifier());
 class ThemeNotifier extends StateNotifier<SageTheme> {
   ThemeNotifier() : super(themes[0]) { _load(); }
@@ -91,6 +94,7 @@ class ThemeModeNotifier extends StateNotifier<ThemeMode> {
 
 final storagePathProvider = StateProvider<String>((ref) => '/storage/emulated/0/SageTools');
 
+// --- 4. Tool Data ---
 class ToolItem {
   final String id; final String title; final IconData icon; final List<SubTool> items;
   ToolItem(this.id, this.title, this.icon, this.items);
@@ -123,5 +127,11 @@ final toolsData = [
     SubTool('Convert MP3', Icons.sync_alt),
     SubTool('Cutter', Icons.content_cut),
     SubTool('Volume Boost', Icons.volume_up),
+  ]),
+  // NEW DEV TOOLS SECTION
+  ToolItem('dev', 'Dev Tools', Icons.build_rounded, [
+    SubTool('Git Grabber', Icons.code_rounded, 'git-grabber'),
+    SubTool('JSON Formatter', Icons.data_object),
+    SubTool('Regex Tester', Icons.rule),
   ]),
 ];
