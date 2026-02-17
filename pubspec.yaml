@@ -36,7 +36,6 @@ dependencies:
   path_provider: ^2.1.2
   intl: ^0.19.0
   file_picker: ^8.0.0
-  pdf_render: ^1.1.2
   syncfusion_flutter_pdf: ^24.1.41 # Allows vector manipulation
   pdf_render: ^1.4.10 # pdf library
   pdf: ^3.10.4
