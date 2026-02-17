@@ -36,31 +36,48 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
 
   Future<void> _fetchRepoInfo() async {
     FocusScope.of(context).unfocus();
-    String url = _urlCtrl.text.trim();
-    if (url.isEmpty) return;
+    String input = _urlCtrl.text.trim();
+    if (input.isEmpty) return;
 
-    if (!url.contains('github.com')) url = 'https://github.com/$url';
-    final uri = Uri.parse(url);
-    if (uri.pathSegments.length < 2) {
-      _setStatus("Invalid URL", Colors.red);
+    // FIX: Better URL parsing
+    // Handles: "user/repo", "github.com/user/repo", "https://github.com/user/repo"
+    if (input.contains('github.com')) {
+      final uri = Uri.tryParse(input);
+      if (uri != null && uri.pathSegments.length >= 2) {
+        _owner = uri.pathSegments[0];
+        _repo = uri.pathSegments[1].replaceAll('.git', '');
+      }
+    } else if (input.contains('/')) {
+      final parts = input.split('/');
+      if (parts.length == 2) {
+        _owner = parts[0];
+        _repo = parts[1].replaceAll('.git', '');
+      }
+    }
+
+    if (_owner == null || _repo == null) {
+      _setStatus("Invalid URL format. Use user/repo", Colors.red);
       return;
     }
 
-    _owner = uri.pathSegments[0];
-    _repo = uri.pathSegments[1].replaceAll('.git', '');
-
     setState(() => _isLoading = true);
-    _setStatus("Fetching repo info...", Colors.blue);
+    _setStatus("Fetching info for $_owner/$_repo...", Colors.blue);
 
     try {
       final client = HttpClient();
       
-      // 1. Get Repo Details (Default Branch)
-      final req1 = await client.getUrl(Uri.parse("https://api.github.com/repos/$_owner/$_repo"));
+      // 1. Get Repo Details
+      final url = "https://api.github.com/repos/$_owner/$_repo";
+      // print("Fetching: $url"); // Debug print
+      
+      final req1 = await client.getUrl(Uri.parse(url));
       req1.headers.set('User-Agent', 'SageTools');
       final resp1 = await req1.close();
       
-      if (resp1.statusCode != 200) throw Exception("Repo private or not found");
+      if (resp1.statusCode == 404) throw Exception("Repo not found (Check URL)");
+      if (resp1.statusCode == 403) throw Exception("API Rate Limit Exceeded");
+      if (resp1.statusCode != 200) throw Exception("Error: ${resp1.statusCode}");
+
       final json1 = jsonDecode(await resp1.transform(utf8.decoder).join());
       String defaultBranch = json1['default_branch'];
 
@@ -68,9 +85,14 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
       final req2 = await client.getUrl(Uri.parse("https://api.github.com/repos/$_owner/$_repo/branches"));
       req2.headers.set('User-Agent', 'SageTools');
       final resp2 = await req2.close();
-      final json2 = jsonDecode(await resp2.transform(utf8.decoder).join()) as List;
       
-      _branches = json2.map((e) => e['name'].toString()).toList();
+      if (resp2.statusCode == 200) {
+        final json2 = jsonDecode(await resp2.transform(utf8.decoder).join()) as List;
+        _branches = json2.map((e) => e['name'].toString()).toList();
+      } else {
+        _branches = [defaultBranch]; // Fallback
+      }
+      
       _currentBranch = defaultBranch;
       _zipNameCtrl.text = "$_repo.zip";
 
@@ -78,11 +100,17 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
       await _fetchTree(defaultBranch);
 
     } catch (e) {
-      _setStatus("Error: $e", Colors.red);
+      // Handle "SocketException" which is the "Failed to lookup" error
+      if (e.toString().contains("SocketException")) {
+         _setStatus("Network Error: Check Internet", Colors.red);
+      } else {
+         _setStatus("Error: ${e.toString().replaceAll('Exception:', '')}", Colors.red);
+      }
       setState(() => _isLoading = false);
     }
   }
 
+  
   Future<void> _fetchTree(String branch) async {
     _setStatus("Fetching file tree...", Colors.orange);
     setState(() => _isLoading = true);
