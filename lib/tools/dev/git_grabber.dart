@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
-// REQUIRED: Add 'archive: ^3.6.1' to pubspec.yaml
 import 'package:archive/archive.dart'; 
 import 'package:archive/archive_io.dart';
 
@@ -87,7 +86,7 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
       }
       
       _currentBranch = defaultBranch;
-      _zipNameCtrl.text = _repo!; // Auto-set name (without .zip)
+      _zipNameCtrl.text = _repo!;
 
       await _fetchTree(defaultBranch);
 
@@ -112,7 +111,6 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
       final json = jsonDecode(await resp.transform(utf8.decoder).join());
       final List rawList = json['tree'];
 
-      // Build Map Hierarchy
       Map<String, _TempNode> nodeMap = {};
       _TempNode root = _TempNode(path: "", type: "tree", name: "root", children: []);
       nodeMap[""] = root; 
@@ -182,14 +180,25 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
     }
   }
 
-  // --- 2. VISIBILITY & SELECTION ---
+  // --- 2. VISIBILITY & SELECTION (FIXED) ---
 
   void _recalcVisible() {
     _visibleTree = _fullFlatTree.where((node) {
       if (node.depth == 0) return true;
-      String parentPath = node.path.substring(0, node.path.lastIndexOf('/'));
-      if (!_expandedFolders.contains(parentPath)) return false;
-      return true;
+      
+      // FIX: Check ALL ancestors.
+      // If ANY parent folder in the path is NOT expanded, this node is hidden.
+      String pathToCheck = node.path;
+      bool isVisible = true;
+      
+      while (pathToCheck.contains('/')) {
+         pathToCheck = pathToCheck.substring(0, pathToCheck.lastIndexOf('/'));
+         if (!_expandedFolders.contains(pathToCheck)) {
+            isVisible = false;
+            break;
+         }
+      }
+      return isVisible;
     }).toList();
   }
 
@@ -225,12 +234,31 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
     return null; // Tristate
   }
 
-  // --- 3. DOWNLOAD ZIP ---
+  // --- 3. DOWNLOAD ZIP (FIXED) ---
 
   Future<void> _downloadZip() async {
     if (_selectedFiles.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("No files selected")));
       return;
+    }
+
+    // FIX: Check for existing file BEFORE doing work
+    if (Platform.isAndroid) await Permission.storage.request();
+    final downloadDir = Directory('/storage/emulated/0/Download');
+    if (!await downloadDir.exists()) await downloadDir.create();
+    
+    String filename = _zipNameCtrl.text.trim();
+    if (filename.isEmpty) filename = "repo";
+    
+    final file = File('${downloadDir.path}/$filename.zip');
+    
+    if (await file.exists()) {
+       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+         content: Text("File '$filename.zip' already exists! Please rename."),
+         backgroundColor: Colors.redAccent,
+         duration: Duration(seconds: 3),
+       ));
+       return; // Stop here
     }
 
     _setStatus("Compressing ZIP...", Colors.blue);
@@ -243,7 +271,6 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
       for (String path in _selectedFiles) {
         final node = _fullFlatTree.firstWhere((n) => n.path == path);
         
-        // Fetch RAW bytes (Base64 -> Bytes) to support Images/Binaries
         final req = await client.getUrl(Uri.parse(node.url));
         req.headers.set('User-Agent', 'SageTools');
         final resp = await req.close();
@@ -252,27 +279,15 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
         String raw = json['content'].toString().replaceAll('\n', '');
         List<int> bytes = base64.decode(raw);
 
-        // Add to Archive
         final archiveFile = ArchiveFile(node.path, bytes.length, bytes);
         archive.addFile(archiveFile);
       }
 
-      // Encode Zip
       final zipEncoder = ZipEncoder();
       final encodedZip = zipEncoder.encode(archive);
 
       if (encodedZip == null) throw Exception("Encoding failed");
 
-      // Save to Android Downloads
-      if (Platform.isAndroid) await Permission.storage.request();
-      
-      final downloadDir = Directory('/storage/emulated/0/Download');
-      if (!await downloadDir.exists()) await downloadDir.create();
-      
-      String filename = _zipNameCtrl.text.trim();
-      if (filename.isEmpty) filename = "repo";
-      
-      final file = File('${downloadDir.path}/$filename.zip');
       await file.writeAsBytes(encodedZip);
 
       _setStatus("Downloaded: $filename.zip", Colors.green);
@@ -331,7 +346,6 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
       appBar: AppBar(title: Text("Git Grabber", style: TextStyle(fontWeight: FontWeight.bold)), backgroundColor: theme.surfaceContainer, elevation: 0),
       body: Column(
         children: [
-          // Search Header
           Container(
             padding: EdgeInsets.all(16),
             decoration: BoxDecoration(color: theme.surfaceContainer, border: Border(bottom: BorderSide(color: theme.outlineVariant.withOpacity(0.2)))),
@@ -371,13 +385,12 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
               decoration: BoxDecoration(color: theme.surfaceContainer, boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, -4))]),
               child: SafeArea(
                 child: Row(children: [
-                  // ZIP Name Field with Locked Suffix
                   Expanded(
                     child: TextField(
                       controller: _zipNameCtrl, 
                       decoration: InputDecoration(
                         labelText: "Filename",
-                        suffixText: ".zip", // Locked extension
+                        suffixText: ".zip",
                         suffixStyle: TextStyle(color: theme.onSurfaceVariant, fontWeight: FontWeight.bold),
                         prefixIcon: Icon(Icons.archive, size: 18), 
                         isDense: true, 
@@ -386,7 +399,6 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
                     )
                   ),
                   SizedBox(width: 12),
-                  // Direct Download Button
                   ElevatedButton.icon(
                     onPressed: _downloadZip, 
                     icon: Icon(Icons.download), 
@@ -435,7 +447,6 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
                 decoration: BoxDecoration(border: Border(bottom: BorderSide(color: theme.outlineVariant.withOpacity(0.05))), color: (checkboxState == true) ? theme.primaryContainer.withOpacity(0.1) : null),
                 child: Row(
                   children: [
-                    // Checkbox
                     Checkbox(
                       value: checkboxState, 
                       tristate: isFolder,
