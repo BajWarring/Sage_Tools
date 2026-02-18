@@ -148,47 +148,52 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
 
   // --- SAVE LOGIC (VECTOR) ---
   Future<void> _savePdf() async {
-    // We don't need _highResBytes for saving anymore, but we check if loaded
     if (_pageSize == null) return;
     setState(() => _isLoading = true);
     
     try {
       if (Platform.isAndroid) await Permission.storage.request();
 
-      // 1. Load the original PDF (Vector)
+      // 1. Load Original PDF
       final List<int> originalBytes = File(widget.filePath).readAsBytesSync();
-      final syncfusion.PdfDocument document = syncfusion.PdfDocument(inputBytes: originalBytes);
+      final syncfusion.PdfDocument sourceDoc = syncfusion.PdfDocument(inputBytes: originalBytes);
+      final syncfusion.PdfPage sourcePage = sourceDoc.pages[0];
 
-      // 2. Get the first page (Assuming user is cropping the first page viewed)
-      // Syncfusion uses 0-based indexing.
-      final syncfusion.PdfPage page = document.pages[0];
+      // 2. Calculate Scale Factors (Preview Image -> PDF Points)
+      // sourcePage.size is in PDF Points (72 DPI)
+      // _pageSize is the Raster Preview Size (likely scaled up for quality)
+      double scaleX = sourcePage.size.width / _pageSize!.width;
+      double scaleY = sourcePage.size.height / _pageSize!.height;
 
-      // 3. Clean up other pages to match previous behavior (Output = Single Page)
-      // We remove from the end to avoid index shifting issues
-      int pageCount = document.pages.count;
-      for (int i = pageCount - 1; i > 0; i--) {
-        document.pages.removeAt(i);
-      }
+      // 3. Calculate Crop Area in PDF Coordinates
+      double cropX = _cropRect.left * scaleX;
+      double cropY = _cropRect.top * scaleY;
+      double cropW = _cropRect.width * scaleX;
+      double cropH = _cropRect.height * scaleY;
 
-      // 4. Calculate Scaling Factor
-      // _pageSize is the Raster Image size (likely scaled x2).
-      // page.size is the Vector Page size (likely 72 dpi).
-      double scaleX = page.size.width / _pageSize!.width;
-      double scaleY = page.size.height / _pageSize!.height;
+      // 4. Create New Document for the Output
+      final syncfusion.PdfDocument destDoc = syncfusion.PdfDocument();
+      
+      // Set margins to 0 so content reaches the edge
+      destDoc.pageSettings.margins.all = 0;
+      // Set the new page size to match the CROPPED area exactly
+      destDoc.pageSettings.size = Size(cropW, cropH);
 
-      // 5. Apply Vector CropBox
-      // We map the UI crop rectangle to the PDF coordinate system.
-      // Note: Syncfusion typically maps Rect.fromLTWH to (Left, Top, Width, Height) naturally.
-      // If the output is inverted vertically, PDF coordinates (Bottom-Left origin) might be the cause, 
-      // but standard Syncfusion usage usually accepts Top-Left logic for simple crops.
-      page.cropBox = Rect.fromLTWH(
-        _cropRect.left * scaleX,
-        _cropRect.top * scaleY,
-        _cropRect.width * scaleX,
-        _cropRect.height * scaleY
+      // 5. Create Template & Draw
+      // createTemplate() captures the vector content of the original page
+      final syncfusion.PdfTemplate template = sourcePage.createTemplate();
+      
+      // Add the new (smaller) page
+      final syncfusion.PdfPage destPage = destDoc.pages.add();
+      
+      // Draw the template at a NEGATIVE offset.
+      // This shifts the original page up/left, revealing only the area inside our new page bounds.
+      destPage.graphics.drawPdfTemplate(
+        template, 
+        Offset(-cropX, -cropY)
       );
 
-      // 6. Save File
+      // 6. Save & Cleanup
       Directory? directory;
       if (Platform.isAndroid) {
         directory = Directory('/storage/emulated/0/Download');
@@ -203,12 +208,11 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       final fileName = 'Sage_Vector_Crop_${DateTime.now().millisecondsSinceEpoch}.pdf';
       final file = File('${saveDir.path}/$fileName');
 
-      // Save bytes
-      final List<int> savedBytes = await document.save();
-      await file.writeAsBytes(savedBytes);
+      await file.writeAsBytes(await destDoc.save());
       
-      // Dispose document
-      document.dispose();
+      // Dispose both documents to free memory
+      sourceDoc.dispose();
+      destDoc.dispose();
 
       if (mounted) {
         Navigator.pop(context);
@@ -225,6 +229,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     }
   }
 
+  
   // --- RESIZE LOGIC (HARD STOP) ---
   void _onHandlePan(DragUpdateDetails d, String type, double scale) {
     if (_pageSize == null) return;
