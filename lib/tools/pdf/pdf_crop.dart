@@ -6,10 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 // 1. STABLE RENDERER (Compiles on your setup)
-import 'package:pdf_render/pdf_render.dart'; 
-// 2. STANDARD PDF WRITER
-import 'package:pdf/pdf.dart' as pw_core;
-import 'package:pdf/widgets.dart' as pw;
+import 'package:pdf_render/pdf_render.dart';
+// 2. VECTOR PDF EDITOR (Syncfusion)
+import 'package:syncfusion_flutter_pdf/pdf.dart' as syncfusion;
 import 'package:permission_handler/permission_handler.dart';
 
 class PdfCropScreen extends StatefulWidget {
@@ -26,10 +25,10 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
   ui.Image? _previewImage; 
   Uint8List? _highResBytes; 
   Size? _imageSize; // Visual Size
-  Size? _pageSize;  // Physical Pixel Size
+  Size? _pageSize;  // Physical Pixel Size (Raster)
   
   // Logic
-  Rect _cropRect = Rect.zero; 
+  Rect _cropRect = Rect.zero;
   bool _isLandscapeRatio = false;
   int _selectedRatioIndex = 0; 
   bool _isRatioLocked = false;
@@ -58,18 +57,16 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     try {
       // 1. Open PDF using pdf_render (Stable)
       final doc = await PdfDocument.openFile(widget.filePath);
-      final page = await doc.getPage(1);
+      final page = await doc.getPage(1); // 1-based index in pdf_render
       
-      // 2. Render to High-Res Image (Scale 2.0 ensures crisp text)
-      // This solves the "Missing Text" & "Rotation" bugs instantly.
-      // The renderer returns the image exactly as it looks (WYSIWYG).
+      // 2. Render to High-Res Image (Scale 2.0 ensures crisp text preview)
       int width = (page.width * 2).toInt();
       int height = (page.height * 2).toInt();
       
       final pageImage = await page.render(width: width, height: height);
       final uiImage = await pageImage.createImageDetached();
       
-      // Convert to PNG bytes for the Writer
+      // Keep bytes mostly for consistency, though we use original file for saving now
       final byteData = await uiImage.toByteData(format: ui.ImageByteFormat.png);
       final bytes = byteData!.buffer.asUint8List();
 
@@ -79,7 +76,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
           _highResBytes = bytes;
           _pageSize = Size(width.toDouble(), height.toDouble());
           
-          // Initial Visual Size (will be updated in LayoutBuilder)
+          // Initial Visual Size
           _imageSize = Size(width.toDouble(), height.toDouble());
           
           // Initial Crop: 80% Center
@@ -149,45 +146,49 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     });
   }
 
-  // --- SAVE LOGIC (WYSIWYG) ---
+  // --- SAVE LOGIC (VECTOR) ---
   Future<void> _savePdf() async {
-    if (_highResBytes == null) return;
+    // We don't need _highResBytes for saving anymore, but we check if loaded
+    if (_pageSize == null) return;
     setState(() => _isLoading = true);
     
     try {
       if (Platform.isAndroid) await Permission.storage.request();
 
-      // 1. Create PDF
-      final pdf = pw.Document();
-      final pdfImage = pw.MemoryImage(_highResBytes!);
-      
-      // 2. Define Page
-      // Page size matches the CROP size exactly.
-      // We draw the FULL image, but shifted negatively so the crop area is visible.
-      // This mimics "Cropping" perfectly.
-      pdf.addPage(
-        pw.Page(
-          pageFormat: pw_core.PdfPageFormat(_cropRect.width, _cropRect.height, marginAll: 0),
-          build: (pw.Context context) {
-            return pw.Stack(
-              children: [
-                pw.Positioned(
-                  left: -_cropRect.left,
-                  top: -_cropRect.top,
-                  child: pw.Image(
-                    pdfImage,
-                    width: _pageSize!.width,
-                    height: _pageSize!.height,
-                    fit: pw.BoxFit.none // No scaling, exact pixels
-                  ),
-                )
-              ]
-            );
-          },
-        ),
+      // 1. Load the original PDF (Vector)
+      final List<int> originalBytes = File(widget.filePath).readAsBytesSync();
+      final syncfusion.PdfDocument document = syncfusion.PdfDocument(inputBytes: originalBytes);
+
+      // 2. Get the first page (Assuming user is cropping the first page viewed)
+      // Syncfusion uses 0-based indexing.
+      final syncfusion.PdfPage page = document.pages[0];
+
+      // 3. Clean up other pages to match previous behavior (Output = Single Page)
+      // We remove from the end to avoid index shifting issues
+      int pageCount = document.pages.count;
+      for (int i = pageCount - 1; i > 0; i--) {
+        document.pages.removeAt(i);
+      }
+
+      // 4. Calculate Scaling Factor
+      // _pageSize is the Raster Image size (likely scaled x2).
+      // page.size is the Vector Page size (likely 72 dpi).
+      double scaleX = page.size.width / _pageSize!.width;
+      double scaleY = page.size.height / _pageSize!.height;
+
+      // 5. Apply Vector CropBox
+      // We map the UI crop rectangle to the PDF coordinate system.
+      // Note: Syncfusion typically maps Rect.fromLTWH to (Left, Top, Width, Height) naturally.
+      // If the output is inverted vertically, PDF coordinates (Bottom-Left origin) might be the cause, 
+      // but standard Syncfusion usage usually accepts Top-Left logic for simple crops.
+      page.cropBox = Rect.fromLTWH(
+        _cropRect.left * scaleX,
+        _cropRect.top * scaleY,
+        _cropRect.width * scaleX,
+        _cropRect.height * scaleY
       );
 
-      // 3. Save
+      // 6. Save File
       Directory? directory;
       if (Platform.isAndroid) {
         directory = Directory('/storage/emulated/0/Download');
@@ -199,15 +200,20 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       final saveDir = Directory('${directory!.path}/SageTools');
       if (!await saveDir.exists()) await saveDir.create(recursive: true);
 
-      final fileName = 'Sage_Crop_${DateTime.now().millisecondsSinceEpoch}.pdf';
+      final fileName = 'Sage_Vector_Crop_${DateTime.now().millisecondsSinceEpoch}.pdf';
       final file = File('${saveDir.path}/$fileName');
 
-      await file.writeAsBytes(await pdf.save());
+      // Save bytes
+      final List<int> savedBytes = await document.save();
+      await file.writeAsBytes(savedBytes);
+      
+      // Dispose document
+      document.dispose();
 
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text("Saved to: ${file.path}"),
+          content: Text("Saved Vector PDF to: ${file.path}"),
           backgroundColor: Theme.of(context).colorScheme.primary,
           duration: Duration(seconds: 4),
         ));
@@ -222,7 +228,6 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
   // --- RESIZE LOGIC (HARD STOP) ---
   void _onHandlePan(DragUpdateDetails d, String type, double scale) {
     if (_pageSize == null) return;
-    
     // Convert touch delta to physical pixels
     double dx = d.delta.dx / scale;
     double dy = d.delta.dy / scale;
@@ -263,25 +268,24 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
               double center = r.top + r.height/2;
               double pT = type.contains('t') ? newB - reqH : (type.contains('b') ? newT : center - reqH/2);
               double pB = type.contains('b') ? newT + reqH : (type.contains('t') ? newT : center + reqH / 2);
-              
               if (pT < 0 || pB > _pageSize!.height || newL < 0 || newR > _pageSize!.width) return;
-              newT = pT; newB = pB;
+              newT = pT;
+              newB = pB;
            } else {
               double propH = newB - newT;
               double reqW = propH * ratio;
               double center = r.left + r.width/2;
               double pL = type.contains('l') ? newR - reqW : (type.contains('r') ? newL : center - reqW/2);
               double pR = type.contains('r') ? newL + reqW : (type.contains('l') ? newL : center + reqW/2);
-              
               if (pL < 0 || pR > _pageSize!.width || newT < 0 || newB > _pageSize!.height) return;
-              newL = pL; newR = pR;
+              newL = pL;
+              newR = pR;
            }
         }
       }
 
       if (newR - newL < minS || newB - newT < minS) return;
       if (newL < 0 || newT < 0 || newR > _pageSize!.width || newB > _pageSize!.height) return;
-
       _cropRect = Rect.fromLTRB(newL, newT, newR, newB);
       _updateControllers();
     });
@@ -324,7 +328,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                         icon: Icon(_isLandscapeRatio ? Icons.crop_landscape : Icons.crop_portrait, size: 16),
                         label: Text(_isLandscapeRatio ? "Landscape" : "Portrait"),
                         style: OutlinedButton.styleFrom(foregroundColor: subText, side: BorderSide(color: border)),
-                      ),
+                       ),
                     ],
                   ),
                   SizedBox(height: 12),
@@ -361,7 +365,7 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                 child: LayoutBuilder(
                   builder: (ctx, constraints) {
                     if (_previewImage == null) return Container();
-                    
+                     
                     double viewW = constraints.maxWidth;
                     double viewH = constraints.maxHeight;
                     double imgW = _pageSize!.width;
@@ -433,7 +437,8 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
   }
 
   List<Widget> _buildHandles(double scale, Color color) {
-    double L = _cropRect.left * scale; double T = _cropRect.top * scale;
+    double L = _cropRect.left * scale;
+    double T = _cropRect.top * scale;
     double R = _cropRect.right * scale; double B = _cropRect.bottom * scale;
     double cX = L + (_cropRect.width * scale / 2); double cY = T + (_cropRect.height * scale / 2);
     double size = 30.0; double dot = 12.0;
