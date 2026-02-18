@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart'; // Using existing package for "Save As"
 import 'package:path_provider/path_provider.dart';
-import 'package:permission_handler/permission_handler.dart';
-// Note: Add 'archive' to pubspec.yaml for real zipping.
+// Note: Add 'archive' to pubspec.yaml for real zipping logic if needed.
 // import 'package:archive/archive.dart'; 
 
 class GitGrabberScreen extends StatefulWidget {
@@ -30,7 +30,7 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
   // UI State
   Set<String> _expandedFolders = {};
   Set<String> _selectedFiles = {};
-  Map<String, String> _fileCache = {}; // Cache content
+  Map<String, String> _fileCache = {};
 
   // --- API LOGIC ---
 
@@ -39,8 +39,7 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
     String input = _urlCtrl.text.trim();
     if (input.isEmpty) return;
 
-    // FIX: Better URL parsing
-    // Handles: "user/repo", "github.com/user/repo", "https://github.com/user/repo"
+    // URL Parser
     if (input.contains('github.com')) {
       final uri = Uri.tryParse(input);
       if (uri != null && uri.pathSegments.length >= 2) {
@@ -67,17 +66,11 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
       final client = HttpClient();
       
       // 1. Get Repo Details
-      final url = "https://api.github.com/repos/$_owner/$_repo";
-      // print("Fetching: $url"); // Debug print
-      
-      final req1 = await client.getUrl(Uri.parse(url));
+      final req1 = await client.getUrl(Uri.parse("https://api.github.com/repos/$_owner/$_repo"));
       req1.headers.set('User-Agent', 'SageTools');
       final resp1 = await req1.close();
       
-      if (resp1.statusCode == 404) throw Exception("Repo not found (Check URL)");
-      if (resp1.statusCode == 403) throw Exception("API Rate Limit Exceeded");
-      if (resp1.statusCode != 200) throw Exception("Error: ${resp1.statusCode}");
-
+      if (resp1.statusCode != 200) throw Exception("Repo not found (Error ${resp1.statusCode})");
       final json1 = jsonDecode(await resp1.transform(utf8.decoder).join());
       String defaultBranch = json1['default_branch'];
 
@@ -90,7 +83,7 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
         final json2 = jsonDecode(await resp2.transform(utf8.decoder).join()) as List;
         _branches = json2.map((e) => e['name'].toString()).toList();
       } else {
-        _branches = [defaultBranch]; // Fallback
+        _branches = [defaultBranch];
       }
       
       _currentBranch = defaultBranch;
@@ -100,17 +93,11 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
       await _fetchTree(defaultBranch);
 
     } catch (e) {
-      // Handle "SocketException" which is the "Failed to lookup" error
-      if (e.toString().contains("SocketException")) {
-         _setStatus("Network Error: Check Internet", Colors.red);
-      } else {
-         _setStatus("Error: ${e.toString().replaceAll('Exception:', '')}", Colors.red);
-      }
+      _setStatus("Error: ${e.toString().replaceAll('Exception:', '')}", Colors.red);
       setState(() => _isLoading = false);
     }
   }
 
-  
   Future<void> _fetchTree(String branch) async {
     _setStatus("Fetching file tree...", Colors.orange);
     setState(() => _isLoading = true);
@@ -129,15 +116,14 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
 
       final List raw = json['tree'];
       
-      // Process Nodes
       _tree = raw.map((e) => GitNode(
         path: e['path'],
         type: e['type'] == 'tree' ? NodeType.folder : NodeType.file,
-        url: e['url'], // Blob URL for content
+        url: e['url'], 
         size: e['size'],
       )).toList();
 
-      // Sort: Folders top, then files. Alphabetical.
+      // Sort: Folders first, then files
       _tree.sort((a, b) {
         if (a.type != b.type) return a.type == NodeType.folder ? -1 : 1;
         return a.path.compareTo(b.path);
@@ -148,12 +134,6 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
         _isLoading = false;
         _expandedFolders.clear();
         _selectedFiles.clear();
-        // Auto-expand top level folders
-        for(var node in _tree) {
-           if (node.type == NodeType.folder && !node.path.contains('/')) {
-             _expandedFolders.add(node.path);
-           }
-        }
       });
       _setStatus("${_tree.length} files loaded", Colors.green);
 
@@ -173,7 +153,6 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
       final resp = await req.close();
       final json = jsonDecode(await resp.transform(utf8.decoder).join());
       
-      // Content is Base64 encoded
       String raw = json['content'].toString().replaceAll('\n', '');
       String decoded = utf8.decode(base64.decode(raw));
       
@@ -184,7 +163,7 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
     }
   }
 
-  // --- HELPERS ---
+  // --- UI HELPERS ---
 
   void _setStatus(String msg, Color color) {
     if(mounted) setState(() { _statusMsg = msg; _statusColor = color; });
@@ -194,14 +173,26 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
     setState(() {
       if (_expandedFolders.contains(path)) {
         _expandedFolders.remove(path);
-        // Also collapse subfolders? Optional.
+        // Also collapse children? Optional, but cleaner to leave them.
       } else {
         _expandedFolders.add(path);
       }
     });
   }
 
-  void _toggleSelect(String path, bool? val) {
+  // Recursively select all files inside a folder
+  void _toggleFolderSelection(String folderPath, bool? val) {
+    setState(() {
+      // Find all files that start with this folder path
+      final children = _tree.where((n) => n.path.startsWith("$folderPath/") && n.type == NodeType.file);
+      for (var child in children) {
+        if (val == true) _selectedFiles.add(child.path);
+        else _selectedFiles.remove(child.path);
+      }
+    });
+  }
+
+  void _toggleFileSelection(String path, bool? val) {
     setState(() {
       if (val == true) _selectedFiles.add(path);
       else _selectedFiles.remove(path);
@@ -216,6 +207,78 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
         _selectedFiles.clear();
       }
     });
+  }
+
+  // --- FIXED VISIBILITY LOGIC ---
+  // A node is visible ONLY if ALL its parent folders are expanded
+  bool _shouldShow(GitNode node) {
+    if (!node.path.contains('/')) return true; // Root item always visible
+    
+    List<String> parts = node.path.split('/');
+    String currentPath = "";
+    
+    // Check every parent folder in the path
+    for (int i = 0; i < parts.length - 1; i++) {
+      currentPath += (i == 0) ? parts[i] : "/${parts[i]}";
+      if (!_expandedFolders.contains(currentPath)) {
+        return false; // If any parent is not expanded, hide this node
+      }
+    }
+    return true;
+  }
+
+  // --- SAVE AS LOGIC ---
+  Future<void> _saveAs() async {
+    if (_selectedFiles.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("No files selected")));
+      return;
+    }
+
+    _setStatus("Waiting for location...", Colors.blue);
+    
+    // 1. Pick Directory
+    String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
+    
+    if (selectedDirectory == null) {
+      _setStatus("Save cancelled", Colors.grey);
+      return;
+    }
+
+    _setStatus("Downloading...", Colors.blue);
+    setState(() => _isLoading = true);
+
+    try {
+      // 2. Create Destination Folder
+      // We create a folder with the ZIP name (minus .zip) to hold the files
+      String folderName = _zipNameCtrl.text.replaceAll('.zip', '');
+      final saveDir = Directory('$selectedDirectory/$folderName');
+      if (!await saveDir.exists()) await saveDir.create(recursive: true);
+
+      // 3. Download & Write Files
+      int count = 0;
+      for (String path in _selectedFiles) {
+        final node = _tree.firstWhere((n) => n.path == path);
+        String content = await _fetchContent(node);
+        
+        // Recreate directory structure locally
+        String localPath = "${saveDir.path}/${node.path}";
+        File f = File(localPath);
+        await f.parent.create(recursive: true); // Create parent dirs
+        await f.writeAsString(content);
+        count++;
+      }
+
+      _setStatus("Saved $count files to ${saveDir.path}", Colors.green);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text("Success! Saved to ${saveDir.path}"),
+        backgroundColor: Colors.green,
+      ));
+
+    } catch (e) {
+      _setStatus("Save Failed: $e", Colors.red);
+    } finally {
+      setState(() => _isLoading = false);
+    }
   }
 
   void _showCodePreview(GitNode node) async {
@@ -258,54 +321,6 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
     );
   }
 
-  Future<void> _downloadZip() async {
-    if (_selectedFiles.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("No files selected")));
-      return;
-    }
-    
-    // NOTE: This logic mimics Zipping. 
-    // To enable real zipping, uncommment Archive imports and logic.
-    
-    _setStatus("Preparing download...", Colors.blue);
-    setState(() => _isLoading = true);
-
-    try {
-      if (Platform.isAndroid) await Permission.storage.request();
-      
-      Directory? dir;
-      if (Platform.isAndroid) {
-        dir = Directory('/storage/emulated/0/Download/SageGit');
-      } else {
-        dir = await getApplicationDocumentsDirectory();
-      }
-      if (!await dir.exists()) await dir.create(recursive: true);
-
-      // Simple Save Logic (Saves individual files to a folder instead of ZIP if archive package missing)
-      // If you have 'package:archive', create an Archive object here.
-      
-      int count = 0;
-      for (String path in _selectedFiles) {
-        final node = _tree.firstWhere((n) => n.path == path);
-        String content = await _fetchContent(node);
-        
-        File f = File('${dir.path}/${node.name}'); 
-        await f.writeAsString(content);
-        count++;
-      }
-
-      _setStatus("Saved $count files to ${dir.path}", Colors.green);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Downloaded to ${dir.path}")));
-
-    } catch (e) {
-      _setStatus("Download Failed: $e", Colors.red);
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
-
-  // --- UI BUILD ---
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context).colorScheme;
@@ -319,7 +334,7 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
       ),
       body: Column(
         children: [
-          // 1. Search Header
+          // Search Header
           Container(
             padding: EdgeInsets.all(16),
             decoration: BoxDecoration(color: theme.surfaceContainer, border: Border(bottom: BorderSide(color: theme.outlineVariant.withOpacity(0.2)))),
@@ -331,10 +346,9 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
                       child: TextField(
                         controller: _urlCtrl,
                         decoration: InputDecoration(
-                          hintText: "user/repo (e.g. flutter/flutter)",
+                          hintText: "user/repo",
                           prefixIcon: Icon(Icons.search),
-                          filled: true,
-                          fillColor: theme.surface,
+                          filled: true, fillColor: theme.surface,
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
                           contentPadding: EdgeInsets.symmetric(horizontal: 16)
                         ),
@@ -361,9 +375,7 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
                           isExpanded: true,
                           underline: SizedBox(),
                           items: _branches.map((b) => DropdownMenuItem(value: b, child: Text(b, style: TextStyle(fontSize: 13)))).toList(),
-                          onChanged: (val) {
-                            if (val != null) _fetchTree(val);
-                          },
+                          onChanged: (val) { if (val != null) _fetchTree(val); },
                         ),
                       ),
                       TextButton(onPressed: () => _selectAll(true), child: Text("All")),
@@ -375,7 +387,7 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
             ),
           ),
 
-          // 2. Status Bar
+          // Status
           Container(
             width: double.infinity,
             padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -389,48 +401,62 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
             ),
           ),
 
-          // 3. Tree View
+          // Tree View
           Expanded(
             child: _tree.isEmpty 
               ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.code, size: 64, color: theme.outlineVariant), SizedBox(height: 16), Text("Enter a repo to start", style: TextStyle(color: theme.onSurfaceVariant))]))
               : ListView.builder(
                   itemCount: _tree.length,
-                  padding: EdgeInsets.only(bottom: 100),
+                  padding: EdgeInsets.zero,
                   itemBuilder: (ctx, i) {
                     final node = _tree[i];
-                    // Visibility Logic based on expanded folders
                     if (!_shouldShow(node)) return SizedBox();
-
                     return _buildNodeTile(node, theme);
                   },
                 ),
           ),
+
+          // SAVE AS BAR (New)
+          if (_tree.isNotEmpty)
+            Container(
+              padding: EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: theme.surfaceContainer,
+                boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, -4))]
+              ),
+              child: SafeArea(
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _zipNameCtrl,
+                        decoration: InputDecoration(
+                          labelText: "Filename",
+                          prefixIcon: Icon(Icons.folder_zip, size: 18),
+                          isDense: true,
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: 12),
+                    ElevatedButton.icon(
+                      onPressed: _saveAs,
+                      icon: Icon(Icons.save_as),
+                      label: Text("Save As"),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: theme.primary,
+                        foregroundColor: theme.onPrimary,
+                        padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))
+                      ),
+                    )
+                  ],
+                ),
+              ),
+            )
         ],
       ),
-      
-      // 4. Download FAB
-      floatingActionButton: _tree.isNotEmpty ? FloatingActionButton.extended(
-        onPressed: _downloadZip,
-        backgroundColor: theme.primary,
-        foregroundColor: theme.onPrimary,
-        icon: Icon(Icons.download),
-        label: Text("Download (${_selectedFiles.length})"),
-      ) : null,
     );
-  }
-
-  // Check if all parent folders are expanded
-  bool _shouldShow(GitNode node) {
-    if (!node.path.contains('/')) return true; // Root file
-    final parentPath = node.path.substring(0, node.path.lastIndexOf('/'));
-    // We need to check if the immediate parent is expanded. 
-    // And if that parent is visible (its parent is expanded), etc.
-    // Simplified: Check if parent path is in _expanded set.
-    // Note: This logic assumes if "src" is expanded, "src/lib" is visible.
-    // If "src/lib" is NOT expanded, "src/lib/main.dart" should be hidden.
-    
-    // Check direct parent
-    return _expandedFolders.contains(parentPath);
   }
 
   Widget _buildNodeTile(GitNode node, ColorScheme theme) {
@@ -439,51 +465,66 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
     final bool isExpanded = _expandedFolders.contains(node.path);
     final bool isSelected = _selectedFiles.contains(node.path);
 
-    return InkWell(
-      onTap: () {
-        if (isFolder) _toggleFolder(node.path);
-        else _toggleSelect(node.path, !isSelected);
-      },
-      child: Container(
-        height: 40,
-        padding: EdgeInsets.only(left: 16.0 + (depth * 20)),
-        decoration: BoxDecoration(
-          border: Border(bottom: BorderSide(color: theme.outlineVariant.withOpacity(0.1))),
-          color: isSelected ? theme.primaryContainer.withOpacity(0.3) : null
-        ),
-        child: Row(
-          children: [
-            // Guide Line logic is tricky in flat list without custom painter, 
-            // but left padding gives the effect.
-            
-            // Icon
-            if (isFolder) 
-              Icon(isExpanded ? Icons.folder_open : Icons.folder, size: 20, color: Colors.amber)
-            else 
-              Icon(Icons.insert_drive_file, size: 18, color: theme.primary),
-            
-            SizedBox(width: 12),
-            
-            // Name
-            Expanded(child: Text(node.name, style: TextStyle(fontSize: 13, color: theme.onSurface), maxLines: 1, overflow: TextOverflow.ellipsis)),
-            
-            // Actions
-            if (!isFolder) ...[
-              IconButton(
-                icon: Icon(Icons.visibility, size: 16, color: theme.primary),
-                onPressed: () => _showCodePreview(node),
-                padding: EdgeInsets.zero,
-                constraints: BoxConstraints(),
+    // Indentation line
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Indent Guides
+          for(int k=0; k<depth; k++) 
+            Container(width: 1, color: theme.outlineVariant.withOpacity(0.1), margin: EdgeInsets.only(left: 19, right: 0)),
+          
+          Expanded(
+            child: InkWell(
+              onTap: () {
+                if (isFolder) _toggleFolder(node.path);
+                else _toggleFileSelection(node.path, !isSelected);
+              },
+              child: Container(
+                height: 44,
+                padding: EdgeInsets.only(left: isFolder ? 8.0 : 8.0), // Reduced base padding
+                decoration: BoxDecoration(border: Border(bottom: BorderSide(color: theme.outlineVariant.withOpacity(0.05)))),
+                child: Row(
+                  children: [
+                    // Icon
+                    Icon(
+                      isFolder ? (isExpanded ? Icons.folder_open : Icons.folder) : Icons.insert_drive_file,
+                      size: 20, 
+                      color: isFolder ? Colors.amber : theme.primary.withOpacity(0.7)
+                    ),
+                    SizedBox(width: 12),
+                    
+                    // Name
+                    Expanded(child: Text(node.name, style: TextStyle(fontSize: 13, color: theme.onSurface))),
+                    
+                    // Actions
+                    if (isFolder)
+                      Checkbox(
+                        value: false, // Folders don't hold state perfectly in this flat list without complex logic, so we make them toggle-only triggers
+                        tristate: true, // Show dash if partial? Too complex. Let's just make it a "Select All Inside" button
+                        onChanged: (v) => _toggleFolderSelection(node.path, true), // Always select all inside
+                        shape: CircleBorder(), // Distinguish from file check
+                        activeColor: theme.secondary,
+                      )
+                    else ...[
+                      IconButton(
+                        icon: Icon(Icons.visibility_outlined, size: 18, color: theme.outline),
+                        onPressed: () => _showCodePreview(node),
+                        padding: EdgeInsets.zero,
+                        constraints: BoxConstraints(),
+                      ),
+                      SizedBox(width: 8),
+                      Checkbox(
+                        value: isSelected, 
+                        onChanged: (v) => _toggleFileSelection(node.path, v),
+                      )
+                    ]
+                  ],
+                ),
               ),
-              SizedBox(width: 8),
-              Checkbox(
-                value: isSelected, 
-                onChanged: (v) => _toggleSelect(node.path, v),
-                visualDensity: VisualDensity.compact,
-              )
-            ]
-          ],
-        ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -494,7 +535,7 @@ enum NodeType { file, folder }
 class GitNode {
   final String path;
   final NodeType type;
-  final String url; // API URL to fetch content
+  final String url; 
   final int? size;
 
   GitNode({required this.path, required this.type, required this.url, this.size});
