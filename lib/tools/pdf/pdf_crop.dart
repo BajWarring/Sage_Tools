@@ -163,37 +163,50 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
           syncfusion.PdfDocument(inputBytes: originalBytes);
       final syncfusion.PdfPage sourcePage = sourceDoc.pages[0];
 
-      // 2. Scale factors: raster preview pixels → PDF points
-      //    Syncfusion reports sourcePage.size in PDF points.
-      //    Syncfusion uses TOP-LEFT origin for graphics (same as Flutter),
-      //    so NO Y-axis flip is needed.
-      final double pdfW = sourcePage.size.width;
-      final double pdfH = sourcePage.size.height;
+      // 2. Get TRUE dimensions from Syncfusion.
+      //
+      //    BUG: When a landscape PDF that WE previously saved is re-opened,
+      //    Syncfusion internally stores it with a /Rotate=90 entry. This means
+      //    sourcePage.size.width is actually the SHORTER side and
+      //    sourcePage.size.height is the LONGER side — i.e. swapped vs what
+      //    pdf_render renders visually. Without correcting for this, scale
+      //    factors are wrong and the crop locks back to portrait.
+      //
+      //    FIX: Compare aspect ratios of the Syncfusion size vs raster size.
+      //    If they are inverses of each other (within tolerance), the
+      //    dimensions are swapped and we must use a cross-mapped scale.
+      double pdfW = sourcePage.size.width;
+      double pdfH = sourcePage.size.height;
       final double rasterW = _pageSize!.width;
       final double rasterH = _pageSize!.height;
 
-      double scaleX = pdfW / rasterW;
-      double scaleY = pdfH / rasterH;
+      // Are aspect ratios inverted? (i.e. pdfW/pdfH ≈ rasterH/rasterW)
+      final double pdfAspect = pdfW / pdfH;
+      final double rasterAspect = rasterW / rasterH;
+      final bool dimensionsSwapped = (pdfAspect - rasterAspect).abs() > 0.05 &&
+          (pdfAspect - 1.0 / rasterAspect).abs() < 0.05;
 
-      // 3. Crop rect in PDF point space (top-left origin, no flip needed)
+      double scaleX, scaleY;
+      if (dimensionsSwapped) {
+        // PDF stored rotated: its W corresponds to raster H and vice versa
+        scaleX = pdfH / rasterW;
+        scaleY = pdfW / rasterH;
+      } else {
+        scaleX = pdfW / rasterW;
+        scaleY = pdfH / rasterH;
+      }
+
+      // 3. Crop rect in PDF point space (Syncfusion uses top-left origin)
       double cropX = _cropRect.left * scaleX;
       double cropY = _cropRect.top * scaleY;
       double cropW = _cropRect.width * scaleX;
       double cropH = _cropRect.height * scaleY;
 
-      // 4. Build destination document
+      // 4. Build destination document.
+      //    Set orientation BEFORE size — Syncfusion silently swaps W/H to
+      //    portrait order unless landscape is explicitly declared first.
       final syncfusion.PdfDocument destDoc = syncfusion.PdfDocument();
       destDoc.pageSettings.margins.all = 0;
-
-      // ── KEY FIX ──────────────────────────────────────────────────────────
-      // Syncfusion internally stores page dimensions in portrait order
-      // (shorter side = width, longer side = height) and will SILENTLY SWAP
-      // cropW and cropH when cropW > cropH — making every landscape crop
-      // come out as a portrait page with the wrong region shown.
-      //
-      // The fix: explicitly set PdfPageOrientation.landscape BEFORE
-      // assigning the size whenever the crop is wider than it is tall.
-      // This tells Syncfusion to keep (cropW, cropH) as-is without swapping.
       if (cropW > cropH) {
         destDoc.pageSettings.orientation =
             syncfusion.PdfPageOrientation.landscape;
@@ -201,15 +214,34 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
         destDoc.pageSettings.orientation =
             syncfusion.PdfPageOrientation.portrait;
       }
-      // Set size AFTER orientation so Syncfusion respects it correctly
       destDoc.pageSettings.size = Size(cropW, cropH);
-      // ─────────────────────────────────────────────────────────────────────
 
-      // 5. Draw original page as vector template, offset so only the
-      //    selected crop region is visible inside the new smaller page.
+      // 5. Draw the source page template into the new page.
+      //
+      //    FIX for invisible/clipped text: Syncfusion's graphics engine clips
+      //    content at the template's declared bounds. When we draw with a
+      //    negative offset, anything that would render outside [0,0,cropW,cropH]
+      //    gets silently dropped BEFORE the offset is applied — so text near
+      //    the edges of the original page disappears in the cropped output.
+      //
+      //    The fix is to pass the FULL source page Size to drawPdfTemplate's
+      //    optional `size` parameter. This tells Syncfusion to scale/place
+      //    the template based on the full source dimensions rather than
+      //    clipping to the dest page size first, allowing the negative offset
+      //    to correctly window into any region of the source content.
       final syncfusion.PdfTemplate template = sourcePage.createTemplate();
       final syncfusion.PdfPage destPage = destDoc.pages.add();
-      destPage.graphics.drawPdfTemplate(template, Offset(-cropX, -cropY));
+
+      // Use actual Syncfusion-reported dimensions for the template draw size,
+      // accounting for any dimension swap
+      final double templateDrawW = dimensionsSwapped ? pdfH : pdfW;
+      final double templateDrawH = dimensionsSwapped ? pdfW : pdfH;
+
+      destPage.graphics.drawPdfTemplate(
+        template,
+        Offset(-cropX, -cropY),
+        Size(templateDrawW, templateDrawH),
+      );
 
       // 6. Save to file
       Directory? directory;
