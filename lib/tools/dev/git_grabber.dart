@@ -1,9 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // For Clipboard
-import 'package:file_picker/file_picker.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
+// REQUIRED: Add 'archive: ^3.6.1' to pubspec.yaml
+import 'package:archive/archive.dart'; 
+import 'package:archive/archive_io.dart';
 
 class GitGrabberScreen extends StatefulWidget {
   @override
@@ -13,7 +15,7 @@ class GitGrabberScreen extends StatefulWidget {
 class _GitGrabberScreenState extends State<GitGrabberScreen> {
   // --- STATE ---
   final TextEditingController _urlCtrl = TextEditingController();
-  final TextEditingController _zipNameCtrl = TextEditingController(text: "repo.zip");
+  final TextEditingController _zipNameCtrl = TextEditingController(text: "repo");
   
   bool _isLoading = false;
   String _statusMsg = "Ready to explore";
@@ -85,7 +87,7 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
       }
       
       _currentBranch = defaultBranch;
-      _zipNameCtrl.text = "$_repo.zip";
+      _zipNameCtrl.text = _repo!; // Auto-set name (without .zip)
 
       await _fetchTree(defaultBranch);
 
@@ -110,6 +112,7 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
       final json = jsonDecode(await resp.transform(utf8.decoder).join());
       final List rawList = json['tree'];
 
+      // Build Map Hierarchy
       Map<String, _TempNode> nodeMap = {};
       _TempNode root = _TempNode(path: "", type: "tree", name: "root", children: []);
       nodeMap[""] = root; 
@@ -222,46 +225,62 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
     return null; // Tristate
   }
 
-  // --- 3. DOWNLOAD & SAVE ---
+  // --- 3. DOWNLOAD ZIP ---
 
-  Future<void> _saveAs() async {
+  Future<void> _downloadZip() async {
     if (_selectedFiles.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("No files selected")));
       return;
     }
 
-    String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
-    if (selectedDirectory == null) return;
-
-    _setStatus("Downloading...", Colors.blue);
+    _setStatus("Compressing ZIP...", Colors.blue);
     setState(() => _isLoading = true);
 
     try {
-      String rootFolderName = _zipNameCtrl.text.replaceAll('.zip', '');
-      final saveDir = Directory('$selectedDirectory/$rootFolderName');
-      if (!await saveDir.exists()) await saveDir.create(recursive: true);
-
-      int count = 0;
+      final archive = Archive();
       final client = HttpClient();
 
       for (String path in _selectedFiles) {
         final node = _fullFlatTree.firstWhere((n) => n.path == path);
+        
+        // Fetch RAW bytes (Base64 -> Bytes) to support Images/Binaries
         final req = await client.getUrl(Uri.parse(node.url));
         req.headers.set('User-Agent', 'SageTools');
         final resp = await req.close();
         final json = jsonDecode(await resp.transform(utf8.decoder).join());
+        
         String raw = json['content'].toString().replaceAll('\n', '');
-        String content = utf8.decode(base64.decode(raw));
+        List<int> bytes = base64.decode(raw);
 
-        String localPath = "${saveDir.path}/${node.path}";
-        File f = File(localPath);
-        await f.parent.create(recursive: true);
-        await f.writeAsString(content);
-        count++;
+        // Add to Archive
+        final archiveFile = ArchiveFile(node.path, bytes.length, bytes);
+        archive.addFile(archiveFile);
       }
 
-      _setStatus("Saved $count files", Colors.green);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Success! Saved to ${saveDir.path}"), backgroundColor: Colors.green));
+      // Encode Zip
+      final zipEncoder = ZipEncoder();
+      final encodedZip = zipEncoder.encode(archive);
+
+      if (encodedZip == null) throw Exception("Encoding failed");
+
+      // Save to Android Downloads
+      if (Platform.isAndroid) await Permission.storage.request();
+      
+      final downloadDir = Directory('/storage/emulated/0/Download');
+      if (!await downloadDir.exists()) await downloadDir.create();
+      
+      String filename = _zipNameCtrl.text.trim();
+      if (filename.isEmpty) filename = "repo";
+      
+      final file = File('${downloadDir.path}/$filename.zip');
+      await file.writeAsBytes(encodedZip);
+
+      _setStatus("Downloaded: $filename.zip", Colors.green);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text("Saved to Downloads/$filename.zip"), 
+        backgroundColor: Colors.green,
+        duration: Duration(seconds: 4),
+      ));
 
     } catch (e) {
       _setStatus("Download Failed: $e", Colors.red);
@@ -270,7 +289,7 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
     }
   }
 
-  // --- 4. PREVIEW POPUP ---
+  // --- 4. PREVIEW & UI ---
 
   void _showCodePreview(GitNode node) async {
     showDialog(
@@ -312,6 +331,7 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
       appBar: AppBar(title: Text("Git Grabber", style: TextStyle(fontWeight: FontWeight.bold)), backgroundColor: theme.surfaceContainer, elevation: 0),
       body: Column(
         children: [
+          // Search Header
           Container(
             padding: EdgeInsets.all(16),
             decoration: BoxDecoration(color: theme.surfaceContainer, border: Border(bottom: BorderSide(color: theme.outlineVariant.withOpacity(0.2)))),
@@ -351,9 +371,33 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
               decoration: BoxDecoration(color: theme.surfaceContainer, boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, -4))]),
               child: SafeArea(
                 child: Row(children: [
-                  Expanded(child: TextField(controller: _zipNameCtrl, decoration: InputDecoration(labelText: "Folder Name", prefixIcon: Icon(Icons.create_new_folder, size: 18), isDense: true, border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))))),
+                  // ZIP Name Field with Locked Suffix
+                  Expanded(
+                    child: TextField(
+                      controller: _zipNameCtrl, 
+                      decoration: InputDecoration(
+                        labelText: "Filename",
+                        suffixText: ".zip", // Locked extension
+                        suffixStyle: TextStyle(color: theme.onSurfaceVariant, fontWeight: FontWeight.bold),
+                        prefixIcon: Icon(Icons.archive, size: 18), 
+                        isDense: true, 
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))
+                      )
+                    )
+                  ),
                   SizedBox(width: 12),
-                  ElevatedButton.icon(onPressed: _saveAs, icon: Icon(Icons.save_as), label: Text("Save As"), style: ElevatedButton.styleFrom(backgroundColor: theme.primary, foregroundColor: theme.onPrimary, padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))))
+                  // Direct Download Button
+                  ElevatedButton.icon(
+                    onPressed: _downloadZip, 
+                    icon: Icon(Icons.download), 
+                    label: Text("Download"), 
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: theme.primary, 
+                      foregroundColor: theme.onPrimary, 
+                      padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16), 
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))
+                    )
+                  )
                 ]),
               ),
             )
@@ -366,15 +410,12 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
     final bool isFolder = node.type == NodeType.folder;
     final bool isExpanded = _expandedFolders.contains(node.path);
     
-    // Checkbox State Logic
     bool? checkboxState;
     if (isFolder) {
       checkboxState = _getFolderState(node.path);
     } else {
       checkboxState = _selectedFiles.contains(node.path);
     }
-
-    double indent = 16.0 + (node.depth * 24.0);
 
     return IntrinsicHeight(
       child: Row(
@@ -394,15 +435,12 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
                 decoration: BoxDecoration(border: Border(bottom: BorderSide(color: theme.outlineVariant.withOpacity(0.05))), color: (checkboxState == true) ? theme.primaryContainer.withOpacity(0.1) : null),
                 child: Row(
                   children: [
-                    // 1. CHECKBOX LEFT
+                    // Checkbox
                     Checkbox(
                       value: checkboxState, 
                       tristate: isFolder,
                       onChanged: (v) {
                          if (isFolder) {
-                           // Folder Toggle Logic:
-                           // If currently True (All), go to False (None)
-                           // If currently Null (Mixed) or False (None), go to True (All)
                            bool newState = !(checkboxState == true);
                            _toggleFolderSelect(node.path, newState);
                          } else {
@@ -411,15 +449,9 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
                       },
                       visualDensity: VisualDensity.compact,
                     ),
-                    
-                    // 2. ICON
                     Icon(isFolder ? (isExpanded ? Icons.folder_open : Icons.folder) : Icons.insert_drive_file, size: 20, color: isFolder ? Colors.amber : theme.primary.withOpacity(0.8)),
                     SizedBox(width: 12),
-                    
-                    // 3. NAME
                     Expanded(child: Text(node.name, style: TextStyle(fontSize: 13, color: theme.onSurface, fontWeight: isFolder ? FontWeight.w600 : FontWeight.normal), maxLines: 1, overflow: TextOverflow.ellipsis)),
-                    
-                    // 4. PREVIEW BUTTON RIGHT
                     if (!isFolder)
                       IconButton(icon: Icon(Icons.visibility_outlined, size: 18, color: theme.outline), onPressed: () => _showCodePreview(node), tooltip: "Preview"),
                     SizedBox(width: 8),
@@ -434,12 +466,11 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
   }
 }
 
-// --- 5. CODE PREVIEW DIALOG ---
+// --- PREVIEW DIALOG & HIGHLIGHTER ---
 class _CodePreviewDialog extends StatefulWidget {
   final GitNode node;
   final Future<String> Function(GitNode) fetcher;
   const _CodePreviewDialog({required this.node, required this.fetcher});
-
   @override
   __CodePreviewDialogState createState() => __CodePreviewDialogState();
 }
@@ -447,29 +478,21 @@ class _CodePreviewDialog extends StatefulWidget {
 class __CodePreviewDialogState extends State<_CodePreviewDialog> {
   String? _content;
   bool _loading = true;
-
   @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
+  void initState() { super.initState(); _load(); }
   void _load() async {
     final text = await widget.fetcher(widget.node);
     if(mounted) setState(() { _content = text; _loading = false; });
   }
-
   void _copy() {
     if (_content != null) {
       Clipboard.setData(ClipboardData(text: _content!));
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Code copied!"), duration: Duration(seconds: 1)));
     }
   }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context).colorScheme;
-    
     return Dialog(
       backgroundColor: theme.surfaceContainer,
       insetPadding: EdgeInsets.all(16),
@@ -477,30 +500,9 @@ class __CodePreviewDialogState extends State<_CodePreviewDialog> {
         height: 600,
         child: Column(
           children: [
-            // Header
-            Padding(
-              padding: EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  Icon(Icons.code, color: theme.primary),
-                  SizedBox(width: 12),
-                  Expanded(child: Text(widget.node.name, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
-                  IconButton(onPressed: _copy, icon: Icon(Icons.copy, size: 20), tooltip: "Copy Code"),
-                  IconButton(onPressed: () => Navigator.pop(context), icon: Icon(Icons.close))
-                ],
-              ),
-            ),
+            Padding(padding: EdgeInsets.all(16), child: Row(children: [Icon(Icons.code, color: theme.primary), SizedBox(width: 12), Expanded(child: Text(widget.node.name, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16))), IconButton(onPressed: _copy, icon: Icon(Icons.copy, size: 20)), IconButton(onPressed: () => Navigator.pop(context), icon: Icon(Icons.close))])),
             Divider(height: 1),
-            
-            // Content
-            Expanded(
-              child: _loading 
-                ? Center(child: CircularProgressIndicator()) 
-                : SingleChildScrollView(
-                    padding: EdgeInsets.all(16),
-                    child: _CodeHighlighter(code: _content!, theme: theme),
-                  ),
-            ),
+            Expanded(child: _loading ? Center(child: CircularProgressIndicator()) : SingleChildScrollView(padding: EdgeInsets.all(16), child: _CodeHighlighter(code: _content!, theme: theme))),
           ],
         ),
       ),
@@ -508,94 +510,39 @@ class __CodePreviewDialogState extends State<_CodePreviewDialog> {
   }
 }
 
-// --- 6. SIMPLE SYNTAX HIGHLIGHTER ---
 class _CodeHighlighter extends StatelessWidget {
   final String code;
   final ColorScheme theme;
   const _CodeHighlighter({required this.code, required this.theme});
-
   @override
   Widget build(BuildContext context) {
     final lines = code.split('\n');
-    final digitCount = lines.length.toString().length;
-
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Line Numbers
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: List.generate(lines.length, (i) => 
-            Padding(
-              padding: EdgeInsets.only(right: 12),
-              child: Text("${i+1}", style: TextStyle(fontFamily: 'monospace', fontSize: 12, color: theme.onSurfaceVariant.withOpacity(0.5))),
-            )
-          ),
-        ),
-        
-        // Code
-        Expanded(
-          child: SelectableText.rich(
-            TextSpan(children: _highlight(code)),
-            style: TextStyle(fontFamily: 'monospace', fontSize: 12, color: theme.onSurface),
-          ),
-        ),
-      ],
-    );
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Column(crossAxisAlignment: CrossAxisAlignment.end, children: List.generate(lines.length, (i) => Padding(padding: EdgeInsets.only(right: 12), child: Text("${i+1}", style: TextStyle(fontFamily: 'monospace', fontSize: 12, color: theme.onSurfaceVariant.withOpacity(0.5)))))),
+      Expanded(child: SelectableText.rich(TextSpan(children: _highlight(code)), style: TextStyle(fontFamily: 'monospace', fontSize: 12, color: theme.onSurface))),
+    ]);
   }
-
   List<TextSpan> _highlight(String text) {
     final List<TextSpan> spans = [];
     final RegExp tokenReg = RegExp(r'(\/\/.*)|(".*?")|(\b(import|class|void|var|final|const|if|else|return|true|false|null|int|double|String|bool|List|Map|for|while)\b)|(\d+)|([a-zA-Z_]\w*)');
-    
     int start = 0;
     for (var match in tokenReg.allMatches(text)) {
-      if (match.start > start) {
-        spans.add(TextSpan(text: text.substring(start, match.start)));
-      }
-      
+      if (match.start > start) spans.add(TextSpan(text: text.substring(start, match.start)));
       final String token = match.group(0)!;
       Color? color;
-      
-      if (match.group(1) != null) color = Colors.green; // Comments
-      else if (match.group(2) != null) color = Colors.orange; // Strings
-      else if (match.group(3) != null) color = Colors.purpleAccent; // Keywords
-      else if (match.group(5) != null) color = Colors.blue; // Numbers
-      else if (match.group(6) != null) {
-         if (token.startsWith(RegExp(r'[A-Z]'))) color = Colors.yellow; // Types/Classes
-      }
-
+      if (match.group(1) != null) color = Colors.green;
+      else if (match.group(2) != null) color = Colors.orange;
+      else if (match.group(3) != null) color = Colors.purpleAccent;
+      else if (match.group(5) != null) color = Colors.blue;
+      else if (match.group(6) != null) { if (token.startsWith(RegExp(r'[A-Z]'))) color = Colors.yellow; }
       spans.add(TextSpan(text: token, style: TextStyle(color: color)));
       start = match.end;
     }
-    
-    if (start < text.length) {
-      spans.add(TextSpan(text: text.substring(start)));
-    }
+    if (start < text.length) spans.add(TextSpan(text: text.substring(start)));
     return spans;
   }
 }
 
-// --- DATA CLASSES ---
 enum NodeType { file, folder }
-
-class GitNode {
-  final String path;
-  final String name;
-  final NodeType type;
-  final String url; 
-  final int depth;
-  final int? size;
-
-  GitNode({required this.path, required this.name, required this.type, required this.url, required this.depth, this.size});
-}
-
-class _TempNode {
-  String path;
-  String type;
-  String name;
-  String? url;
-  int? size;
-  List<_TempNode> children;
-  _TempNode({required this.path, required this.type, required this.name, this.url, this.size, required this.children});
-}
+class GitNode { final String path; final String name; final NodeType type; final String url; final int depth; final int? size; GitNode({required this.path, required this.name, required this.type, required this.url, required this.depth, this.size}); }
+class _TempNode { String path; String type; String name; String? url; int? size; List<_TempNode> children; _TempNode({required this.path, required this.type, required this.name, this.url, this.size, required this.children}); }
