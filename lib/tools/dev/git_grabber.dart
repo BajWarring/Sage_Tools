@@ -25,13 +25,13 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
   String? _currentBranch;
 
   // Tree Data
-  List<GitNode> _fullFlatTree = []; // The master list (correctly sorted)
-  List<GitNode> _visibleTree = [];  // The list currently shown (filtered by expansion)
+  List<GitNode> _fullFlatTree = []; 
+  List<GitNode> _visibleTree = [];  
   
   // Interaction State
-  Set<String> _expandedFolders = {}; // Folders that are open
-  Set<String> _selectedFiles = {};   // Files that are checked
-  Map<String, String> _fileCache = {}; // Content cache
+  Set<String> _expandedFolders = {}; 
+  Set<String> _selectedFiles = {};   
+  Map<String, String> _fileCache = {}; 
 
   // --- 1. API & TREE BUILDING ---
 
@@ -64,7 +64,6 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
 
     try {
       final client = HttpClient();
-      // Get Default Branch
       final req1 = await client.getUrl(Uri.parse("https://api.github.com/repos/$_owner/$_repo"));
       req1.headers.set('User-Agent', 'SageTools');
       final resp1 = await req1.close();
@@ -73,7 +72,6 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
       final json1 = jsonDecode(await resp1.transform(utf8.decoder).join());
       String defaultBranch = json1['default_branch'];
 
-      // Get Branch List
       final req2 = await client.getUrl(Uri.parse("https://api.github.com/repos/$_owner/$_repo/branches"));
       req2.headers.set('User-Agent', 'SageTools');
       final resp2 = await req2.close();
@@ -131,12 +129,10 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
       for (var path in nodeMap.keys) {
         if (path == "") continue;
         final node = nodeMap[path]!;
-        
         String parentPath = "";
         if (path.contains('/')) {
           parentPath = path.substring(0, path.lastIndexOf('/'));
         }
-        
         if (nodeMap.containsKey(parentPath)) {
           nodeMap[parentPath]!.children.add(node);
         }
@@ -170,15 +166,8 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
       setState(() {
         _currentBranch = branch;
         _fullFlatTree = flatResult;
-        _expandedFolders.clear();
+        _expandedFolders.clear(); // Ensure all closed at start
         _selectedFiles.clear();
-        
-        for (var node in _fullFlatTree) {
-          if (node.depth == 0 && node.type == NodeType.folder) {
-            _expandedFolders.add(node.path);
-          }
-        }
-        
         _recalcVisible();
         _isLoading = false;
       });
@@ -190,7 +179,7 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
     }
   }
 
-  // --- 2. VISIBILITY & SELECTION LOGIC ---
+  // --- 2. VISIBILITY & SELECTION ---
 
   void _recalcVisible() {
     _visibleTree = _fullFlatTree.where((node) {
@@ -212,15 +201,27 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
     });
   }
 
+  // Select/Deselect all files inside a folder
   void _toggleFolderSelect(String folderPath, bool? select) {
     setState(() {
-      for (var node in _fullFlatTree) {
-        if (node.type == NodeType.file && node.path.startsWith("$folderPath/")) {
-          if (select == true) _selectedFiles.add(node.path);
-          else _selectedFiles.remove(node.path);
-        }
+      final children = _fullFlatTree.where((n) => n.path.startsWith("$folderPath/") && n.type == NodeType.file);
+      for (var child in children) {
+        if (select == true) _selectedFiles.add(child.path);
+        else _selectedFiles.remove(child.path);
       }
     });
+  }
+
+  // Determine state of folder checkbox (True=All, Null=Some, False=None)
+  bool? _getFolderState(String folderPath) {
+    final children = _fullFlatTree.where((n) => n.path.startsWith("$folderPath/") && n.type == NodeType.file).toList();
+    if (children.isEmpty) return false;
+    
+    int selectedCount = children.where((n) => _selectedFiles.contains(n.path)).length;
+    
+    if (selectedCount == 0) return false;
+    if (selectedCount == children.length) return true;
+    return null; // Tristate (dash)
   }
 
   // --- 3. DOWNLOAD & SAVE ---
@@ -247,7 +248,6 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
 
       for (String path in _selectedFiles) {
         final node = _fullFlatTree.firstWhere((n) => n.path == path);
-        
         final req = await client.getUrl(Uri.parse(node.url));
         req.headers.set('User-Agent', 'SageTools');
         final resp = await req.close();
@@ -269,6 +269,63 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
       _setStatus("Download Failed: $e", Colors.red);
     } finally {
       setState(() => _isLoading = false);
+    }
+  }
+
+  void _showCodePreview(GitNode node) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Dialog(
+        backgroundColor: Theme.of(ctx).colorScheme.surfaceContainer,
+        child: Container(
+          padding: EdgeInsets.all(16),
+          height: 500,
+          child: Column(
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(child: Text(node.name, style: TextStyle(fontWeight: FontWeight.bold))),
+                  IconButton(onPressed: () => Navigator.pop(ctx), icon: Icon(Icons.close))
+                ],
+              ),
+              Divider(),
+              Expanded(
+                child: FutureBuilder<String>(
+                  future: _fetchContent(node),
+                  builder: (context, snap) {
+                    if (!snap.hasData) return Center(child: CircularProgressIndicator());
+                    return SingleChildScrollView(
+                      child: SelectableText(
+                        snap.data!, 
+                        style: TextStyle(fontFamily: 'monospace', fontSize: 12),
+                      ),
+                    );
+                  },
+                ),
+              )
+            ],
+          ),
+        ),
+      )
+    );
+  }
+
+  Future<String> _fetchContent(GitNode node) async {
+    if (_fileCache.containsKey(node.path)) return _fileCache[node.path]!;
+    try {
+      final client = HttpClient();
+      final req = await client.getUrl(Uri.parse(node.url));
+      req.headers.set('User-Agent', 'SageTools');
+      final resp = await req.close();
+      final json = jsonDecode(await resp.transform(utf8.decoder).join());
+      String raw = json['content'].toString().replaceAll('\n', '');
+      String decoded = utf8.decode(base64.decode(raw));
+      _fileCache[node.path] = decoded;
+      return decoded;
+    } catch (e) {
+      return "Error: $e";
     }
   }
 
@@ -340,8 +397,15 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
   Widget _buildNodeTile(GitNode node, ColorScheme theme) {
     final bool isFolder = node.type == NodeType.folder;
     final bool isExpanded = _expandedFolders.contains(node.path);
-    final bool isSelected = _selectedFiles.contains(node.path);
     
+    // Checkbox State
+    bool? checkboxState;
+    if (isFolder) {
+      checkboxState = _getFolderState(node.path);
+    } else {
+      checkboxState = _selectedFiles.contains(node.path);
+    }
+
     double indent = 16.0 + (node.depth * 24.0);
 
     return IntrinsicHeight(
@@ -355,21 +419,54 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
             child: InkWell(
               onTap: () {
                 if (isFolder) _toggleFolder(node.path);
-                else setState(() { if(isSelected) _selectedFiles.remove(node.path); else _selectedFiles.add(node.path); });
+                else setState(() { if(checkboxState == true) _selectedFiles.remove(node.path); else _selectedFiles.add(node.path); });
               },
               child: Container(
                 height: 44,
-                padding: EdgeInsets.only(left: 8.0),
-                decoration: BoxDecoration(border: Border(bottom: BorderSide(color: theme.outlineVariant.withOpacity(0.05))), color: isSelected ? theme.primaryContainer.withOpacity(0.1) : null),
+                decoration: BoxDecoration(border: Border(bottom: BorderSide(color: theme.outlineVariant.withOpacity(0.05))), color: (checkboxState == true) ? theme.primaryContainer.withOpacity(0.1) : null),
                 child: Row(
                   children: [
-                    Icon(isFolder ? (isExpanded ? Icons.folder_open : Icons.folder) : Icons.insert_drive_file, size: 20, color: isFolder ? Colors.amber : theme.primary.withOpacity(0.8)),
+                    // 1. CHECKBOX (Left Side)
+                    Checkbox(
+                      value: checkboxState, 
+                      tristate: isFolder,
+                      onChanged: (v) {
+                        if (isFolder) _toggleFolderSelect(node.path, v != false); 
+                        else setState(() { if(v == true) _selectedFiles.add(node.path); else _selectedFiles.remove(node.path); });
+                      },
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    
+                    // 2. ICON
+                    Icon(
+                      isFolder ? (isExpanded ? Icons.folder_open : Icons.folder) : Icons.insert_drive_file,
+                      size: 20, 
+                      color: isFolder ? Colors.amber : theme.primary.withOpacity(0.8)
+                    ),
                     SizedBox(width: 12),
-                    Expanded(child: Text(node.name, style: TextStyle(fontSize: 13, color: theme.onSurface, fontWeight: isFolder ? FontWeight.w600 : FontWeight.normal), maxLines: 1, overflow: TextOverflow.ellipsis)),
-                    if (isFolder)
-                      IconButton(icon: Icon(Icons.playlist_add_check, size: 20, color: theme.outline), tooltip: "Select All Inside", onPressed: () => _toggleFolderSelect(node.path, true))
-                    else
-                      Checkbox(value: isSelected, onChanged: (v) => setState(() { if(v!) _selectedFiles.add(node.path); else _selectedFiles.remove(node.path); }), visualDensity: VisualDensity.compact)
+                    
+                    // 3. NAME
+                    Expanded(
+                      child: Text(
+                        node.name, 
+                        style: TextStyle(
+                          fontSize: 13, 
+                          color: theme.onSurface, 
+                          fontWeight: isFolder ? FontWeight.w600 : FontWeight.normal
+                        ), 
+                        maxLines: 1, 
+                        overflow: TextOverflow.ellipsis
+                      )
+                    ),
+                    
+                    // 4. PREVIEW BUTTON (Right Side, for Files)
+                    if (!isFolder)
+                      IconButton(
+                        icon: Icon(Icons.visibility_outlined, size: 18, color: theme.outline),
+                        onPressed: () => _showCodePreview(node),
+                        tooltip: "Preview Code",
+                      ),
+                    SizedBox(width: 8),
                   ],
                 ),
               ),
@@ -381,23 +478,7 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
   }
 }
 
-// --- HELPERS ---
-class TreeGuidePainter extends CustomPainter {
-  final int depth;
-  final Color color;
-  TreeGuidePainter({required this.depth, required this.color});
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = color..strokeWidth = 1.0;
-    for (int i = 1; i <= depth; i++) {
-      double x = (i * 24.0) - 12.0; 
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
-    }
-  }
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
+// --- DATA CLASSES ---
 enum NodeType { file, folder }
 
 class GitNode {
