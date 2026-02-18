@@ -5,10 +5,10 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
-// Hide PdfDocument and PdfPage from the 'pdf' package to avoid
-// name collision with the same classes exported by 'pdf_render'.
-import 'package:pdf/widgets.dart' as pw;
-import 'package:pdf_render/pdf_render.dart';            // PdfDocument, PdfPage live here
+// Hide the conflicting classes from the 'pdf' package so that
+// PdfDocument and PdfPage unambiguously resolve to pdf_render's versions.
+import 'package:pdf/widgets.dart' as pw hide PdfDocument, PdfPage;
+import 'package:pdf_render/pdf_render.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart' as syncfusion;
 import 'package:permission_handler/permission_handler.dart';
 
@@ -23,7 +23,7 @@ class PdfCropScreen extends StatefulWidget {
 class _PdfCropScreenState extends State<PdfCropScreen> {
   bool _isLoading = true;
   ui.Image? _previewImage;
-  Size? _pageSize; // raster pixel size at 2x scale
+  Size? _pageSize;
 
   Rect _cropRect = Rect.zero;
   bool _isLandscapeRatio = false;
@@ -73,7 +73,6 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     try {
       final doc = await PdfDocument.openFile(widget.filePath);
       final page = await doc.getPage(1);
-      // Render preview at 2x for sharp display
       final int w = (page.width * 2).toInt();
       final int h = (page.height * 2).toInt();
       final rendered = await page.render(width: w, height: h);
@@ -159,7 +158,6 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     });
   }
 
-  // ─── SAVE: High-quality raster crop ────────────────────────────────────────
   Future<void> _savePdf() async {
     if (_pageSize == null) return;
     setState(() => _isLoading = true);
@@ -167,17 +165,16 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     try {
       if (Platform.isAndroid) await Permission.storage.request();
 
-      // ── Step 1: Render full page at 4x the preview scale ──
       const double hiResMultiplier = 4.0;
       final int hiW = (_pageSize!.width * hiResMultiplier).toInt();
       final int hiH = (_pageSize!.height * hiResMultiplier).toInt();
 
       final PdfDocument renderDoc = await PdfDocument.openFile(widget.filePath);
       final PdfPage renderPage = await renderDoc.getPage(1);
-      final PdfPageImage hiResPageImg = await renderPage.render(width: hiW, height: hiH);
+      final PdfPageImage hiResPageImg =
+          await renderPage.render(width: hiW, height: hiH);
       final ui.Image hiResImg = await hiResPageImg.createImageDetached();
 
-      // ── Step 2: Crop to selected region ─────────────────────────────────────
       final double scX = hiW / _pageSize!.width;
       final double scY = hiH / _pageSize!.height;
 
@@ -209,7 +206,6 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       hiResImg.dispose();
       croppedImg.dispose();
 
-      // ── Step 3: Get page's true PDF point dimensions via Syncfusion ──────────
       final List<int> origBytes = await File(widget.filePath).readAsBytes();
       final syncfusion.PdfDocument sfDoc =
           syncfusion.PdfDocument(inputBytes: origBytes);
@@ -222,13 +218,14 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       final bool swapped = (pdfAspect - rasterAspect).abs() > 0.05 &&
           (pdfAspect - 1.0 / rasterAspect).abs() < 0.05;
 
-      final double ptScaleX = swapped ? pdfH / _pageSize!.width : pdfW / _pageSize!.width;
-      final double ptScaleY = swapped ? pdfW / _pageSize!.height : pdfH / _pageSize!.height;
+      final double ptScaleX =
+          swapped ? pdfH / _pageSize!.width : pdfW / _pageSize!.width;
+      final double ptScaleY =
+          swapped ? pdfW / _pageSize!.height : pdfH / _pageSize!.height;
 
       final double cropPtW = _cropRect.width * ptScaleX;
       final double cropPtH = _cropRect.height * ptScaleY;
 
-      // ── Step 4: Build output PDF ──────────────────────────────────────────────
       final pw.Document outputDoc = pw.Document(compress: true);
       final pw.MemoryImage pdfImage = pw.MemoryImage(pngBytes);
 
@@ -240,7 +237,6 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
 
       final List<int> outputBytes = await outputDoc.save();
 
-      // ── Step 5: Write to file ────────────────────────────────────────────────
       Directory? directory;
       if (Platform.isAndroid) {
         directory = Directory('/storage/emulated/0/Download');
@@ -276,7 +272,6 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     }
   }
 
-  // ─── HANDLE DRAG ────────────────────────────────────────────────────────────
   void _onHandlePan(DragUpdateDetails d, String type, double scale) {
     if (_pageSize == null) return;
     final double dx = d.delta.dx / scale;
@@ -314,7 +309,10 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
           final double pB = type.contains('b')
               ? newT + reqH
               : (type.contains('t') ? newT : center + reqH / 2);
-          if (pT < 0 || pB > _pageSize!.height || newL < 0 || newR > _pageSize!.width) return;
+          if (pT < 0 ||
+              pB > _pageSize!.height ||
+              newL < 0 ||
+              newR > _pageSize!.width) return;
           newT = pT;
           newB = pB;
         } else {
@@ -326,14 +324,20 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
           final double pR = type.contains('r')
               ? newL + reqW
               : (type.contains('l') ? newL : center + reqW / 2);
-          if (pL < 0 || pR > _pageSize!.width || newT < 0 || newB > _pageSize!.height) return;
+          if (pL < 0 ||
+              pR > _pageSize!.width ||
+              newT < 0 ||
+              newB > _pageSize!.height) return;
           newL = pL;
           newR = pR;
         }
       }
 
       if (newR - newL < minS || newB - newT < minS) return;
-      if (newL < 0 || newT < 0 || newR > _pageSize!.width || newB > _pageSize!.height) return;
+      if (newL < 0 ||
+          newT < 0 ||
+          newR > _pageSize!.width ||
+          newB > _pageSize!.height) return;
       _cropRect = Rect.fromLTRB(newL, newT, newR, newB);
       _updateControllers();
     });
@@ -359,7 +363,8 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
             icon: Icon(Icons.chevron_left, color: subText, size: 28),
             onPressed: () => Navigator.pop(context)),
         title: Text("Crop PDF",
-            style: TextStyle(color: text, fontWeight: FontWeight.bold, fontSize: 20)),
+            style:
+                TextStyle(color: text, fontWeight: FontWeight.bold, fontSize: 20)),
         centerTitle: false,
         bottom: PreferredSize(
             preferredSize: const Size.fromHeight(1),
@@ -368,9 +373,9 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : Column(children: [
-              // ── Top controls ──────────────────────────────────────────────
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 decoration: BoxDecoration(
                     color: panelBg,
                     border: Border(bottom: BorderSide(color: border))),
@@ -382,7 +387,8 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                           onPressed: () {},
                           icon: const Icon(Icons.auto_fix_high, size: 16),
                           label: const Text("Auto Detect"),
-                          style: TextButton.styleFrom(foregroundColor: theme.primary)),
+                          style: TextButton.styleFrom(
+                              foregroundColor: theme.primary)),
                       OutlinedButton.icon(
                         onPressed: () => setState(() {
                           _isLandscapeRatio = !_isLandscapeRatio;
@@ -395,7 +401,8 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                                 ? Icons.crop_landscape
                                 : Icons.crop_portrait,
                             size: 16),
-                        label: Text(_isLandscapeRatio ? "Landscape" : "Portrait"),
+                        label:
+                            Text(_isLandscapeRatio ? "Landscape" : "Portrait"),
                         style: OutlinedButton.styleFrom(
                             foregroundColor: subText,
                             side: BorderSide(color: border)),
@@ -411,24 +418,32 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                       separatorBuilder: (_, __) => const SizedBox(width: 8),
                       itemBuilder: (ctx, i) {
                         final bool lockActive = i == 0 && _isRatioLocked;
-                        final bool isSelected = i != 0 && i == _selectedRatioIndex;
-                        final bool highlighted = i == 0 ? lockActive : isSelected;
+                        final bool isSelected =
+                            i != 0 && i == _selectedRatioIndex;
+                        final bool highlighted =
+                            i == 0 ? lockActive : isSelected;
                         String label = ratioList[i]['label'];
                         IconData? icon;
                         if (i == 0) {
                           label = "";
-                          icon = _isRatioLocked ? Icons.lock : Icons.lock_open;
+                          icon =
+                              _isRatioLocked ? Icons.lock : Icons.lock_open;
                         }
                         return GestureDetector(
-                          onTap: () => i == 0 ? _toggleLockState() : _applyRatio(i),
+                          onTap: () =>
+                              i == 0 ? _toggleLockState() : _applyRatio(i),
                           child: Container(
                             width: i == 0 ? 50 : null,
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 16),
                             alignment: Alignment.center,
                             decoration: BoxDecoration(
-                                color: highlighted ? theme.primary : panelBg,
+                                color:
+                                    highlighted ? theme.primary : panelBg,
                                 border: Border.all(
-                                    color: highlighted ? theme.primary : border),
+                                    color: highlighted
+                                        ? theme.primary
+                                        : border),
                                 borderRadius: BorderRadius.circular(12)),
                             child: Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
@@ -436,7 +451,9 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                                   if (icon != null)
                                     Icon(icon,
                                         size: 16,
-                                        color: highlighted ? theme.onPrimary : subText),
+                                        color: highlighted
+                                            ? theme.onPrimary
+                                            : subText),
                                   if (label.isNotEmpty)
                                     Text(label,
                                         style: TextStyle(
@@ -454,7 +471,6 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                 ]),
               ),
 
-              // ── Preview canvas ────────────────────────────────────────────
               Expanded(
                 child: Container(
                   color: theme.surfaceContainerHighest,
@@ -464,7 +480,8 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                     final double viewH = constraints.maxHeight;
                     final double imgW = _pageSize!.width;
                     final double imgH = _pageSize!.height;
-                    final double scale = min(viewW / imgW, viewH / imgH) * 0.9;
+                    final double scale =
+                        min(viewW / imgW, viewH / imgH) * 0.9;
                     final double displayW = imgW * scale;
                     final double displayH = imgH * scale;
                     final double offX = (viewW - displayW) / 2;
@@ -481,54 +498,75 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                               decoration: BoxDecoration(
                                   color: panelBg,
                                   boxShadow: const [
-                                    BoxShadow(color: Colors.black12, blurRadius: 10)
+                                    BoxShadow(
+                                        color: Colors.black12,
+                                        blurRadius: 10)
                                   ]),
-                              child: RawImage(image: _previewImage, fit: BoxFit.contain)),
-                          // Overlays
+                              child: RawImage(
+                                  image: _previewImage,
+                                  fit: BoxFit.contain)),
                           Positioned(
-                              top: 0, left: 0, right: 0,
+                              top: 0,
+                              left: 0,
+                              right: 0,
                               height: _cropRect.top * scale,
-                              child: const ColoredBox(color: Colors.black54)),
+                              child:
+                                  const ColoredBox(color: Colors.black54)),
                           Positioned(
                               top: _cropRect.bottom * scale,
-                              left: 0, right: 0, bottom: 0,
-                              child: const ColoredBox(color: Colors.black54)),
+                              left: 0,
+                              right: 0,
+                              bottom: 0,
+                              child:
+                                  const ColoredBox(color: Colors.black54)),
                           Positioned(
                               top: _cropRect.top * scale,
-                              bottom: (_pageSize!.height - _cropRect.bottom) * scale,
+                              bottom: (_pageSize!.height - _cropRect.bottom) *
+                                  scale,
                               left: 0,
                               width: _cropRect.left * scale,
-                              child: const ColoredBox(color: Colors.black54)),
+                              child:
+                                  const ColoredBox(color: Colors.black54)),
                           Positioned(
                               top: _cropRect.top * scale,
-                              bottom: (_pageSize!.height - _cropRect.bottom) * scale,
-                              left: _cropRect.right * scale, right: 0,
-                              child: const ColoredBox(color: Colors.black54)),
-                          // Crop box
+                              bottom: (_pageSize!.height - _cropRect.bottom) *
+                                  scale,
+                              left: _cropRect.right * scale,
+                              right: 0,
+                              child:
+                                  const ColoredBox(color: Colors.black54)),
                           Positioned(
                             left: _cropRect.left * scale,
                             top: _cropRect.top * scale,
                             width: _cropRect.width * scale,
                             height: _cropRect.height * scale,
                             child: GestureDetector(
-                              onPanUpdate: (d) => _onHandlePan(d, 'body', scale),
+                              onPanUpdate: (d) =>
+                                  _onHandlePan(d, 'body', scale),
                               child: Container(
                                 decoration: BoxDecoration(
-                                    border: Border.all(color: theme.primary, width: 2)),
+                                    border: Border.all(
+                                        color: theme.primary, width: 2)),
+                                // Remove const: Spacer/Divider inside Column
+                                // is fine without it
                                 child: Stack(children: [
                                   Column(children: [
                                     const Spacer(),
-                                    const Divider(color: Colors.white30, height: 1),
+                                    const Divider(
+                                        color: Colors.white30, height: 1),
                                     const Spacer(),
-                                    const Divider(color: Colors.white30, height: 1),
-                                    const Spacer()
+                                    const Divider(
+                                        color: Colors.white30, height: 1),
+                                    const Spacer(),
                                   ]),
                                   const Row(children: [
                                     Spacer(),
-                                    VerticalDivider(color: Colors.white30, width: 1),
+                                    VerticalDivider(
+                                        color: Colors.white30, width: 1),
                                     Spacer(),
-                                    VerticalDivider(color: Colors.white30, width: 1),
-                                    Spacer()
+                                    VerticalDivider(
+                                        color: Colors.white30, width: 1),
+                                    Spacer(),
                                   ]),
                                 ]),
                               ),
@@ -542,12 +580,12 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                 ),
               ),
 
-              // ── Bottom panel ──────────────────────────────────────────────
               Container(
                 padding: const EdgeInsets.all(24),
                 decoration: BoxDecoration(
                     color: panelBg,
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                    borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(24)),
                     boxShadow: [
                       BoxShadow(
                           color: Colors.black.withOpacity(0.05),
@@ -572,7 +610,8 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                       onPressed: _savePdf,
                       icon: const Icon(Icons.download_rounded, size: 20),
                       label: const Text("Export PDF",
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                          style: TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.bold)),
                       style: ElevatedButton.styleFrom(
                           backgroundColor: theme.primary,
                           foregroundColor: theme.onPrimary,
@@ -612,7 +651,8 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
                     decoration: BoxDecoration(
                         color: color,
                         shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 2)))),
+                        border:
+                            Border.all(color: Colors.white, width: 2)))),
           ),
         );
 
@@ -623,14 +663,16 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
     ];
   }
 
-  Widget _buildInput(String label, TextEditingController ctrl, ColorScheme theme) {
+  Widget _buildInput(
+      String label, TextEditingController ctrl, ColorScheme theme) {
     return Expanded(
         child: Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
                 color: theme.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: theme.outlineVariant.withOpacity(0.2))),
+                border: Border.all(
+                    color: theme.outlineVariant.withOpacity(0.2))),
             child: Column(children: [
               Text(label,
                   style: TextStyle(
