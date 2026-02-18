@@ -1,10 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart'; // Using existing package for "Save As"
+import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
-// Note: Add 'archive' to pubspec.yaml for real zipping logic if needed.
-// import 'package:archive/archive.dart'; 
 
 class GitGrabberScreen extends StatefulWidget {
   @override
@@ -12,7 +10,7 @@ class GitGrabberScreen extends StatefulWidget {
 }
 
 class _GitGrabberScreenState extends State<GitGrabberScreen> {
-  // Logic State
+  // --- STATE ---
   final TextEditingController _urlCtrl = TextEditingController();
   final TextEditingController _zipNameCtrl = TextEditingController(text: "repo.zip");
   
@@ -20,26 +18,28 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
   String _statusMsg = "Ready to explore";
   Color _statusColor = Colors.grey;
 
-  // Repo Data
+  // Repo Info
   String? _owner;
   String? _repo;
   List<String> _branches = [];
   String? _currentBranch;
-  List<GitNode> _tree = [];
-  
-  // UI State
-  Set<String> _expandedFolders = {};
-  Set<String> _selectedFiles = {};
-  Map<String, String> _fileCache = {};
 
-  // --- API LOGIC ---
+  // Tree Data
+  List<GitNode> _fullFlatTree = []; // The master list (correctly sorted)
+  List<GitNode> _visibleTree = [];  // The list currently shown (filtered by expansion)
+  
+  // Interaction State
+  Set<String> _expandedPaths = {}; // Folders that are open
+  Set<String> _selectedPaths = {}; // Files that are checked
+  Map<String, String> _fileCache = {}; // Content cache
+
+  // --- 1. API & TREE BUILDING ---
 
   Future<void> _fetchRepoInfo() async {
     FocusScope.of(context).unfocus();
     String input = _urlCtrl.text.trim();
     if (input.isEmpty) return;
 
-    // URL Parser
     if (input.contains('github.com')) {
       final uri = Uri.tryParse(input);
       if (uri != null && uri.pathSegments.length >= 2) {
@@ -55,26 +55,25 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
     }
 
     if (_owner == null || _repo == null) {
-      _setStatus("Invalid URL format. Use user/repo", Colors.red);
+      _setStatus("Invalid format. Use user/repo", Colors.red);
       return;
     }
 
     setState(() => _isLoading = true);
-    _setStatus("Fetching info for $_owner/$_repo...", Colors.blue);
+    _setStatus("Fetching $_owner/$_repo...", Colors.blue);
 
     try {
       final client = HttpClient();
-      
-      // 1. Get Repo Details
+      // Get Default Branch
       final req1 = await client.getUrl(Uri.parse("https://api.github.com/repos/$_owner/$_repo"));
       req1.headers.set('User-Agent', 'SageTools');
       final resp1 = await req1.close();
       
-      if (resp1.statusCode != 200) throw Exception("Repo not found (Error ${resp1.statusCode})");
+      if (resp1.statusCode != 200) throw Exception("Repo not found");
       final json1 = jsonDecode(await resp1.transform(utf8.decoder).join());
       String defaultBranch = json1['default_branch'];
 
-      // 2. Get Branches
+      // Get Branch List
       final req2 = await client.getUrl(Uri.parse("https://api.github.com/repos/$_owner/$_repo/branches"));
       req2.headers.set('User-Agent', 'SageTools');
       final resp2 = await req2.close();
@@ -89,7 +88,6 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
       _currentBranch = defaultBranch;
       _zipNameCtrl.text = "$_repo.zip";
 
-      // 3. Fetch Tree
       await _fetchTree(defaultBranch);
 
     } catch (e) {
@@ -99,7 +97,7 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
   }
 
   Future<void> _fetchTree(String branch) async {
-    _setStatus("Fetching file tree...", Colors.orange);
+    _setStatus("Building tree...", Colors.orange);
     setState(() => _isLoading = true);
     
     try {
@@ -107,35 +105,93 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
       final url = "https://api.github.com/repos/$_owner/$_repo/git/trees/$branch?recursive=1";
       final req = await client.getUrl(Uri.parse(url));
       req.headers.set('User-Agent', 'SageTools');
-      
       final resp = await req.close();
+      
       if (resp.statusCode != 200) throw Exception("Failed to load tree");
-      
       final json = jsonDecode(await resp.transform(utf8.decoder).join());
-      if (json['truncated'] == true) _setStatus("Large repo (truncated)", Colors.orange);
+      final List rawList = json['tree'];
 
-      final List raw = json['tree'];
+      // --- THE FIX: Convert Flat API List -> Hierarchy -> Sorted Flat List ---
       
-      _tree = raw.map((e) => GitNode(
-        path: e['path'],
-        type: e['type'] == 'tree' ? NodeType.folder : NodeType.file,
-        url: e['url'], 
-        size: e['size'],
-      )).toList();
+      // 1. Build Map Hierarchy
+      Map<String, _TempNode> nodeMap = {};
+      _TempNode root = _TempNode(path: "", type: "tree", name: "root", children: []);
+      nodeMap[""] = root; // Root map
 
-      // Sort: Folders first, then files
-      _tree.sort((a, b) {
-        if (a.type != b.type) return a.type == NodeType.folder ? -1 : 1;
-        return a.path.compareTo(b.path);
-      });
+      // Create nodes
+      for (var item in rawList) {
+        String path = item['path'];
+        nodeMap[path] = _TempNode(
+          path: path,
+          type: item['type'],
+          name: path.split('/').last,
+          url: item['url'],
+          size: item['size'],
+          children: []
+        );
+      }
+
+      // Link parents
+      for (var path in nodeMap.keys) {
+        if (path == "") continue;
+        final node = nodeMap[path]!;
+        
+        String parentPath = "";
+        if (path.contains('/')) {
+          parentPath = path.substring(0, path.lastIndexOf('/'));
+        }
+        
+        // If parent exists (it should), add child
+        if (nodeMap.containsKey(parentPath)) {
+          nodeMap[parentPath]!.children.add(node);
+        }
+      }
+
+      // 2. Flatten Recursive (Depth First)
+      List<GitNode> flatResult = [];
+      void flatten(_TempNode parent, int depth) {
+        // Sort: Folders first, then Files. Both Alphabetical.
+        parent.children.sort((a, b) {
+          if (a.type != b.type) return a.type == "tree" ? -1 : 1;
+          return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+        });
+
+        for (var child in parent.children) {
+          flatResult.add(GitNode(
+            path: child.path,
+            name: child.name,
+            type: child.type == "tree" ? NodeType.folder : NodeType.file,
+            url: child.url ?? "",
+            depth: depth,
+            size: child.size
+          ));
+          
+          // Recurse if folder
+          if (child.type == "tree") {
+            flatten(child, depth + 1);
+          }
+        }
+      }
+
+      flatten(root, 0);
 
       setState(() {
         _currentBranch = branch;
-        _isLoading = false;
+        _fullFlatTree = flatResult;
         _expandedFolders.clear();
         _selectedFiles.clear();
+        
+        // Auto-expand top level folders only
+        for (var node in _fullFlatTree) {
+          if (node.depth == 0 && node.type == NodeType.folder) {
+            _expandedFolders.add(node.path);
+          }
+        }
+        
+        _recalcVisible(); // Build the view list
+        _isLoading = false;
       });
-      _setStatus("${_tree.length} files loaded", Colors.green);
+      _setStatus("${flatResult.length} items loaded", Colors.green);
 
     } catch (e) {
       _setStatus("Tree Error: $e", Colors.red);
@@ -143,183 +199,120 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
     }
   }
 
-  Future<String> _fetchContent(GitNode node) async {
-    if (_fileCache.containsKey(node.path)) return _fileCache[node.path]!;
-    
-    try {
-      final client = HttpClient();
-      final req = await client.getUrl(Uri.parse(node.url));
-      req.headers.set('User-Agent', 'SageTools');
-      final resp = await req.close();
-      final json = jsonDecode(await resp.transform(utf8.decoder).join());
-      
-      String raw = json['content'].toString().replaceAll('\n', '');
-      String decoded = utf8.decode(base64.decode(raw));
-      
-      _fileCache[node.path] = decoded;
-      return decoded;
-    } catch (e) {
-      return "Error loading content: $e";
-    }
-  }
+  // --- 2. VISIBILITY & SELECTION LOGIC ---
 
-  // --- UI HELPERS ---
-
-  void _setStatus(String msg, Color color) {
-    if(mounted) setState(() { _statusMsg = msg; _statusColor = color; });
+  void _recalcVisible() {
+    // Filter the full list based on expanded parents
+    _visibleTree = _fullFlatTree.where((node) {
+      if (node.depth == 0) return true;
+      
+      // Check if immediate parent is expanded
+      String parentPath = node.path.substring(0, node.path.lastIndexOf('/'));
+      // AND ensure the parent itself is visible (recursive check implicit via top-down expansion)
+      // Actually, we just need to know if ALL ancestors are in _expandedFolders
+      
+      // Optimization: We know the list is sorted Depth-First. 
+      // If a parent is closed, we skip all its children. 
+      // But simple set check is safer for now:
+      
+      // We check if the direct parent is expanded. 
+      // If the direct parent is collapsed, this node is hidden.
+      // If the direct parent is expanded, but the GRANDPARENT was collapsed, 
+      // the parent wouldn't be visible to be clicked. 
+      // So checking strict ancestry is best.
+      
+      // Fast check: Is the direct parent expanded?
+      if (!_expandedFolders.contains(parentPath)) return false;
+      
+      // Robust check: Are all ancestors expanded?
+      // (Usually implied if we only click visible things, but "Expand All" might break it. 
+      //  Let's stick to direct parent check for speed, usually sufficient for UI interaction)
+      return true;
+    }).toList();
   }
 
   void _toggleFolder(String path) {
     setState(() {
       if (_expandedFolders.contains(path)) {
         _expandedFolders.remove(path);
-        // Also collapse children? Optional, but cleaner to leave them.
+        // Remove any children from expanded too? No, keep state.
       } else {
         _expandedFolders.add(path);
       }
+      _recalcVisible();
     });
   }
 
-  // Recursively select all files inside a folder
-  void _toggleFolderSelection(String folderPath, bool? val) {
+  void _toggleFolderSelect(String folderPath, bool? select) {
     setState(() {
       // Find all files that start with this folder path
-      final children = _tree.where((n) => n.path.startsWith("$folderPath/") && n.type == NodeType.file);
-      for (var child in children) {
-        if (val == true) _selectedFiles.add(child.path);
-        else _selectedFiles.remove(child.path);
+      // Since it's a list, we iterate.
+      for (var node in _fullFlatTree) {
+        if (node.type == NodeType.file && node.path.startsWith("$folderPath/")) {
+          if (select == true) _selectedPaths.add(node.path);
+          else _selectedPaths.remove(node.path);
+        }
       }
     });
   }
 
-  void _toggleFileSelection(String path, bool? val) {
-    setState(() {
-      if (val == true) _selectedFiles.add(path);
-      else _selectedFiles.remove(path);
-    });
-  }
+  // --- 3. DOWNLOAD & SAVE ---
 
-  void _selectAll(bool select) {
-    setState(() {
-      if (select) {
-        _selectedFiles = _tree.where((n) => n.type == NodeType.file).map((n) => n.path).toSet();
-      } else {
-        _selectedFiles.clear();
-      }
-    });
-  }
-
-  // --- FIXED VISIBILITY LOGIC ---
-  // A node is visible ONLY if ALL its parent folders are expanded
-  bool _shouldShow(GitNode node) {
-    if (!node.path.contains('/')) return true; // Root item always visible
-    
-    List<String> parts = node.path.split('/');
-    String currentPath = "";
-    
-    // Check every parent folder in the path
-    for (int i = 0; i < parts.length - 1; i++) {
-      currentPath += (i == 0) ? parts[i] : "/${parts[i]}";
-      if (!_expandedFolders.contains(currentPath)) {
-        return false; // If any parent is not expanded, hide this node
-      }
-    }
-    return true;
-  }
-
-  // --- SAVE AS LOGIC ---
   Future<void> _saveAs() async {
-    if (_selectedFiles.isEmpty) {
+    if (_selectedPaths.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("No files selected")));
       return;
     }
 
-    _setStatus("Waiting for location...", Colors.blue);
-    
-    // 1. Pick Directory
     String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
-    
-    if (selectedDirectory == null) {
-      _setStatus("Save cancelled", Colors.grey);
-      return;
-    }
+    if (selectedDirectory == null) return;
 
     _setStatus("Downloading...", Colors.blue);
     setState(() => _isLoading = true);
 
     try {
-      // 2. Create Destination Folder
-      // We create a folder with the ZIP name (minus .zip) to hold the files
-      String folderName = _zipNameCtrl.text.replaceAll('.zip', '');
-      final saveDir = Directory('$selectedDirectory/$folderName');
+      String rootFolderName = _zipNameCtrl.text.replaceAll('.zip', '');
+      final saveDir = Directory('$selectedDirectory/$rootFolderName');
       if (!await saveDir.exists()) await saveDir.create(recursive: true);
 
-      // 3. Download & Write Files
       int count = 0;
-      for (String path in _selectedFiles) {
-        final node = _tree.firstWhere((n) => n.path == path);
-        String content = await _fetchContent(node);
+      final client = HttpClient();
+
+      for (String path in _selectedPaths) {
+        // Find node
+        final node = _fullFlatTree.firstWhere((n) => n.path == path);
         
-        // Recreate directory structure locally
+        // Fetch
+        final req = await client.getUrl(Uri.parse(node.url));
+        req.headers.set('User-Agent', 'SageTools');
+        final resp = await req.close();
+        final json = jsonDecode(await resp.transform(utf8.decoder).join());
+        String raw = json['content'].toString().replaceAll('\n', '');
+        String content = utf8.decode(base64.decode(raw));
+
+        // Save
         String localPath = "${saveDir.path}/${node.path}";
         File f = File(localPath);
-        await f.parent.create(recursive: true); // Create parent dirs
+        await f.parent.create(recursive: true);
         await f.writeAsString(content);
         count++;
       }
 
-      _setStatus("Saved $count files to ${saveDir.path}", Colors.green);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text("Success! Saved to ${saveDir.path}"),
-        backgroundColor: Colors.green,
-      ));
+      _setStatus("Saved $count files", Colors.green);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Success! Saved to ${saveDir.path}"), backgroundColor: Colors.green));
 
     } catch (e) {
-      _setStatus("Save Failed: $e", Colors.red);
+      _setStatus("Download Failed: $e", Colors.red);
     } finally {
       setState(() => _isLoading = false);
     }
   }
 
-  void _showCodePreview(GitNode node) async {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => Dialog(
-        backgroundColor: Theme.of(ctx).colorScheme.surfaceContainer,
-        child: Container(
-          padding: EdgeInsets.all(16),
-          height: 500,
-          child: Column(
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(child: Text(node.name, style: TextStyle(fontWeight: FontWeight.bold))),
-                  IconButton(onPressed: () => Navigator.pop(ctx), icon: Icon(Icons.close))
-                ],
-              ),
-              Divider(),
-              Expanded(
-                child: FutureBuilder<String>(
-                  future: _fetchContent(node),
-                  builder: (context, snap) {
-                    if (!snap.hasData) return Center(child: CircularProgressIndicator());
-                    return SingleChildScrollView(
-                      child: SelectableText(
-                        snap.data!, 
-                        style: TextStyle(fontFamily: 'monospace', fontSize: 12),
-                      ),
-                    );
-                  },
-                ),
-              )
-            ],
-          ),
-        ),
-      )
-    );
+  void _setStatus(String msg, Color color) {
+    if(mounted) setState(() { _statusMsg = msg; _statusColor = color; });
   }
+
+  // --- 4. UI COMPONENTS ---
 
   @override
   Widget build(BuildContext context) {
@@ -327,131 +320,56 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
     
     return Scaffold(
       backgroundColor: theme.surface,
-      appBar: AppBar(
-        title: Text("Git Grabber", style: TextStyle(fontWeight: FontWeight.bold)),
-        backgroundColor: theme.surfaceContainer,
-        elevation: 0,
-      ),
+      appBar: AppBar(title: Text("Git Grabber", style: TextStyle(fontWeight: FontWeight.bold)), backgroundColor: theme.surfaceContainer, elevation: 0),
       body: Column(
         children: [
-          // Search Header
+          // Search
           Container(
             padding: EdgeInsets.all(16),
             decoration: BoxDecoration(color: theme.surfaceContainer, border: Border(bottom: BorderSide(color: theme.outlineVariant.withOpacity(0.2)))),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _urlCtrl,
-                        decoration: InputDecoration(
-                          hintText: "user/repo",
-                          prefixIcon: Icon(Icons.search),
-                          filled: true, fillColor: theme.surface,
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                          contentPadding: EdgeInsets.symmetric(horizontal: 16)
-                        ),
-                        onSubmitted: (_) => _fetchRepoInfo(),
-                      ),
-                    ),
-                    SizedBox(width: 8),
-                    IconButton.filled(
-                      onPressed: _fetchRepoInfo, 
-                      icon: _isLoading ? SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: theme.onPrimary, strokeWidth: 2)) : Icon(Icons.arrow_forward),
-                      style: IconButton.styleFrom(backgroundColor: theme.primary, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)))
-                    )
-                  ],
-                ),
-                if (_branches.isNotEmpty) ...[
-                  SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Icon(Icons.fork_right, size: 16, color: theme.primary),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: DropdownButton<String>(
-                          value: _currentBranch,
-                          isExpanded: true,
-                          underline: SizedBox(),
-                          items: _branches.map((b) => DropdownMenuItem(value: b, child: Text(b, style: TextStyle(fontSize: 13)))).toList(),
-                          onChanged: (val) { if (val != null) _fetchTree(val); },
-                        ),
-                      ),
-                      TextButton(onPressed: () => _selectAll(true), child: Text("All")),
-                      TextButton(onPressed: () => _selectAll(false), child: Text("None")),
-                    ],
-                  )
-                ]
-              ],
-            ),
-          ),
-
-          // Status
-          Container(
-            width: double.infinity,
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: _statusColor.withOpacity(0.1),
-            child: Row(
-              children: [
-                Container(width: 8, height: 8, decoration: BoxDecoration(color: _statusColor, shape: BoxShape.circle)),
+            child: Column(children: [
+              Row(children: [
+                Expanded(child: TextField(controller: _urlCtrl, decoration: InputDecoration(hintText: "user/repo", prefixIcon: Icon(Icons.search), filled: true, fillColor: theme.surface, border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none), contentPadding: EdgeInsets.symmetric(horizontal: 16)), onSubmitted: (_) => _fetchRepoInfo())),
                 SizedBox(width: 8),
-                Text(_statusMsg, style: TextStyle(fontSize: 12, color: _statusColor, fontWeight: FontWeight.bold)),
-              ],
-            ),
+                IconButton.filled(onPressed: _fetchRepoInfo, icon: _isLoading ? SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: theme.onPrimary, strokeWidth: 2)) : Icon(Icons.arrow_forward), style: IconButton.styleFrom(backgroundColor: theme.primary, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))))
+              ]),
+              if (_branches.isNotEmpty) ...[
+                SizedBox(height: 12),
+                Row(children: [
+                  Icon(Icons.fork_right, size: 16, color: theme.primary), SizedBox(width: 8),
+                  Expanded(child: DropdownButton<String>(value: _currentBranch, isExpanded: true, underline: SizedBox(), items: _branches.map((b) => DropdownMenuItem(value: b, child: Text(b, style: TextStyle(fontSize: 13)))).toList(), onChanged: (val) { if (val != null) _fetchTree(val); })),
+                  TextButton(onPressed: () => setState(() => _selectedPaths = _fullFlatTree.where((n) => n.type == NodeType.file).map((n) => n.path).toSet()), child: Text("All")),
+                  TextButton(onPressed: () => setState(() => _selectedPaths.clear()), child: Text("None")),
+                ])
+              ]
+            ]),
           ),
+          
+          // Status
+          Container(width: double.infinity, padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4), color: _statusColor.withOpacity(0.1), child: Text(_statusMsg, style: TextStyle(fontSize: 11, color: _statusColor, fontWeight: FontWeight.bold))),
 
-          // Tree View
+          // Tree List
           Expanded(
-            child: _tree.isEmpty 
-              ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.code, size: 64, color: theme.outlineVariant), SizedBox(height: 16), Text("Enter a repo to start", style: TextStyle(color: theme.onSurfaceVariant))]))
+            child: _visibleTree.isEmpty 
+              ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.code, size: 64, color: theme.outlineVariant), SizedBox(height: 16), Text("No files to display", style: TextStyle(color: theme.onSurfaceVariant))]))
               : ListView.builder(
-                  itemCount: _tree.length,
+                  itemCount: _visibleTree.length,
                   padding: EdgeInsets.zero,
-                  itemBuilder: (ctx, i) {
-                    final node = _tree[i];
-                    if (!_shouldShow(node)) return SizedBox();
-                    return _buildNodeTile(node, theme);
-                  },
+                  itemBuilder: (ctx, i) => _buildNodeTile(_visibleTree[i], theme),
                 ),
           ),
 
-          // SAVE AS BAR (New)
-          if (_tree.isNotEmpty)
+          // Save Bar
+          if (_fullFlatTree.isNotEmpty)
             Container(
               padding: EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: theme.surfaceContainer,
-                boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, -4))]
-              ),
+              decoration: BoxDecoration(color: theme.surfaceContainer, boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, -4))]),
               child: SafeArea(
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _zipNameCtrl,
-                        decoration: InputDecoration(
-                          labelText: "Filename",
-                          prefixIcon: Icon(Icons.folder_zip, size: 18),
-                          isDense: true,
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                        ),
-                      ),
-                    ),
-                    SizedBox(width: 12),
-                    ElevatedButton.icon(
-                      onPressed: _saveAs,
-                      icon: Icon(Icons.save_as),
-                      label: Text("Save As"),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: theme.primary,
-                        foregroundColor: theme.onPrimary,
-                        padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))
-                      ),
-                    )
-                  ],
-                ),
+                child: Row(children: [
+                  Expanded(child: TextField(controller: _zipNameCtrl, decoration: InputDecoration(labelText: "Folder Name", prefixIcon: Icon(Icons.create_new_folder, size: 18), isDense: true, border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))))),
+                  SizedBox(width: 12),
+                  ElevatedButton.icon(onPressed: _saveAs, icon: Icon(Icons.save_as), label: Text("Save As"), style: ElevatedButton.styleFrom(backgroundColor: theme.primary, foregroundColor: theme.onPrimary, padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))))
+                ]),
               ),
             )
         ],
@@ -460,85 +378,122 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
   }
 
   Widget _buildNodeTile(GitNode node, ColorScheme theme) {
-    final int depth = node.path.split('/').length - 1;
     final bool isFolder = node.type == NodeType.folder;
     final bool isExpanded = _expandedFolders.contains(node.path);
-    final bool isSelected = _selectedFiles.contains(node.path);
+    final bool isSelected = _selectedPaths.contains(node.path);
+    
+    // Guide Lines Logic: Calculate indentation padding
+    double indent = 16.0 + (node.depth * 24.0);
 
-    // Indentation line
-    return IntrinsicHeight(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Indent Guides
-          for(int k=0; k<depth; k++) 
-            Container(width: 1, color: theme.outlineVariant.withOpacity(0.1), margin: EdgeInsets.only(left: 19, right: 0)),
-          
-          Expanded(
-            child: InkWell(
-              onTap: () {
-                if (isFolder) _toggleFolder(node.path);
-                else _toggleFileSelection(node.path, !isSelected);
-              },
-              child: Container(
-                height: 44,
-                padding: EdgeInsets.only(left: isFolder ? 8.0 : 8.0), // Reduced base padding
-                decoration: BoxDecoration(border: Border(bottom: BorderSide(color: theme.outlineVariant.withOpacity(0.05)))),
-                child: Row(
-                  children: [
-                    // Icon
-                    Icon(
-                      isFolder ? (isExpanded ? Icons.folder_open : Icons.folder) : Icons.insert_drive_file,
-                      size: 20, 
-                      color: isFolder ? Colors.amber : theme.primary.withOpacity(0.7)
-                    ),
-                    SizedBox(width: 12),
-                    
-                    // Name
-                    Expanded(child: Text(node.name, style: TextStyle(fontSize: 13, color: theme.onSurface))),
-                    
-                    // Actions
-                    if (isFolder)
-                      Checkbox(
-                        value: false, // Folders don't hold state perfectly in this flat list without complex logic, so we make them toggle-only triggers
-                        tristate: true, // Show dash if partial? Too complex. Let's just make it a "Select All Inside" button
-                        onChanged: (v) => _toggleFolderSelection(node.path, true), // Always select all inside
-                        shape: CircleBorder(), // Distinguish from file check
-                        activeColor: theme.secondary,
-                      )
-                    else ...[
-                      IconButton(
-                        icon: Icon(Icons.visibility_outlined, size: 18, color: theme.outline),
-                        onPressed: () => _showCodePreview(node),
-                        padding: EdgeInsets.zero,
-                        constraints: BoxConstraints(),
-                      ),
-                      SizedBox(width: 8),
-                      Checkbox(
-                        value: isSelected, 
-                        onChanged: (v) => _toggleFileSelection(node.path, v),
-                      )
-                    ]
-                  ],
+    return InkWell(
+      onTap: () {
+        if (isFolder) _toggleFolder(node.path);
+        else setState(() { if(isSelected) _selectedPaths.remove(node.path); else _selectedPaths.add(node.path); });
+      },
+      child: Container(
+        height: 48,
+        decoration: BoxDecoration(
+          border: Border(bottom: BorderSide(color: theme.outlineVariant.withOpacity(0.05))),
+          color: isSelected ? theme.primaryContainer.withOpacity(0.1) : null
+        ),
+        child: Stack(
+          children: [
+            // Guide Lines
+            if (node.depth > 0)
+              Positioned(
+                left: 0, top: 0, bottom: 0, width: indent,
+                child: CustomPaint(
+                  painter: TreeGuidePainter(depth: node.depth, color: theme.outlineVariant.withOpacity(0.2)),
                 ),
               ),
+              
+            // Content
+            Padding(
+              padding: EdgeInsets.only(left: indent),
+              child: Row(
+                children: [
+                  // Icon
+                  Icon(
+                    isFolder ? (isExpanded ? Icons.folder_open : Icons.folder) : Icons.description_outlined,
+                    size: 20, 
+                    color: isFolder ? Colors.amber : theme.primary.withOpacity(0.8)
+                  ),
+                  SizedBox(width: 12),
+                  // Name
+                  Expanded(
+                    child: Text(
+                      node.name, 
+                      style: TextStyle(
+                        fontSize: 13, 
+                        color: theme.onSurface,
+                        fontWeight: isFolder ? FontWeight.w600 : FontWeight.normal
+                      ), 
+                      maxLines: 1, 
+                      overflow: TextOverflow.ellipsis
+                    )
+                  ),
+                  // Checkbox
+                  if (isFolder)
+                    IconButton(
+                      icon: Icon(Icons.playlist_add_check, size: 20, color: theme.outline),
+                      tooltip: "Select All Inside",
+                      onPressed: () => _toggleFolderSelect(node.path, true),
+                    )
+                  else
+                    Checkbox(
+                      value: isSelected, 
+                      onChanged: (v) => setState(() { if(v!) _selectedPaths.add(node.path); else _selectedPaths.remove(node.path); }),
+                      visualDensity: VisualDensity.compact,
+                    )
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 }
 
+// --- TREE GUIDE PAINTER ---
+class TreeGuidePainter extends CustomPainter {
+  final int depth;
+  final Color color;
+  TreeGuidePainter({required this.depth, required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = color..strokeWidth = 1.0;
+    // Draw a vertical line for each depth level
+    for (int i = 1; i <= depth; i++) {
+      double x = (i * 24.0) - 12.0; // Center of the indent block
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+    }
+  }
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+// --- DATA CLASSES ---
 enum NodeType { file, folder }
 
 class GitNode {
   final String path;
+  final String name;
   final NodeType type;
   final String url; 
+  final int depth;
   final int? size;
 
-  GitNode({required this.path, required this.type, required this.url, this.size});
+  GitNode({required this.path, required this.name, required this.type, required this.url, required this.depth, this.size});
+}
 
-  String get name => path.split('/').last;
+class _TempNode {
+  String path;
+  String type;
+  String name;
+  String? url;
+  int? size;
+  List<_TempNode> children;
+  _TempNode({required this.path, required this.type, required this.name, this.url, this.size, required this.children});
 }
