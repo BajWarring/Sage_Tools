@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:ui';
 import 'core.dart';
 import 'tabs/dashboard_tab.dart';
 import 'tabs/settings_tab.dart';
-import 'splash_screen.dart'; // <-- import the splash
+import 'splash_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -50,15 +49,11 @@ class SageApp extends ConsumerWidget {
         scaffoldBackgroundColor: const Color(0xFF09090B),
       ),
 
-      // ← Start from SplashScreen instead of MainScaffold directly
       home: const SplashScreen(),
     );
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Main scaffold (referenced by HomePage inside splash_screen.dart)
-// ─────────────────────────────────────────────────────────────────────────────
 class MainScaffold extends ConsumerStatefulWidget {
   const MainScaffold({super.key});
 
@@ -77,7 +72,8 @@ class _MainScaffoldState extends ConsumerState<MainScaffold> {
       extendBody: true,
       body: IndexedStack(
         index: _tabIndex,
-        children: const [
+        // ← No 'const' here: DashboardTab/SettingsTab lack const constructors
+        children: [
           DashboardTab(),
           SettingsTab(),
         ],
@@ -90,7 +86,8 @@ class _MainScaffoldState extends ConsumerState<MainScaffold> {
             decoration: BoxDecoration(
               color: theme.surfaceContainer.withOpacity(0.85),
               border: Border(
-                  top: BorderSide(color: theme.outlineVariant.withOpacity(0.2))),
+                  top: BorderSide(
+                      color: theme.outlineVariant.withOpacity(0.2))),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -122,11 +119,12 @@ class _NavBarItem extends StatelessWidget {
   final bool isActive;
   final VoidCallback onTap;
 
-  const _NavBarItem(
-      {required this.icon,
-      required this.label,
-      required this.isActive,
-      required this.onTap});
+  const _NavBarItem({
+    required this.icon,
+    required this.label,
+    required this.isActive,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
