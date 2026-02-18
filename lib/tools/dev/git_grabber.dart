@@ -29,8 +29,8 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
   List<GitNode> _visibleTree = [];  // The list currently shown (filtered by expansion)
   
   // Interaction State
-  Set<String> _expandedPaths = {}; // Folders that are open
-  Set<String> _selectedPaths = {}; // Files that are checked
+  Set<String> _expandedFolders = {}; // Folders that are open
+  Set<String> _selectedFiles = {};   // Files that are checked
   Map<String, String> _fileCache = {}; // Content cache
 
   // --- 1. API & TREE BUILDING ---
@@ -111,14 +111,11 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
       final json = jsonDecode(await resp.transform(utf8.decoder).join());
       final List rawList = json['tree'];
 
-      // --- THE FIX: Convert Flat API List -> Hierarchy -> Sorted Flat List ---
-      
-      // 1. Build Map Hierarchy
+      // Build Map Hierarchy
       Map<String, _TempNode> nodeMap = {};
       _TempNode root = _TempNode(path: "", type: "tree", name: "root", children: []);
-      nodeMap[""] = root; // Root map
+      nodeMap[""] = root; 
 
-      // Create nodes
       for (var item in rawList) {
         String path = item['path'];
         nodeMap[path] = _TempNode(
@@ -131,7 +128,6 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
         );
       }
 
-      // Link parents
       for (var path in nodeMap.keys) {
         if (path == "") continue;
         final node = nodeMap[path]!;
@@ -141,16 +137,13 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
           parentPath = path.substring(0, path.lastIndexOf('/'));
         }
         
-        // If parent exists (it should), add child
         if (nodeMap.containsKey(parentPath)) {
           nodeMap[parentPath]!.children.add(node);
         }
       }
 
-      // 2. Flatten Recursive (Depth First)
       List<GitNode> flatResult = [];
       void flatten(_TempNode parent, int depth) {
-        // Sort: Folders first, then Files. Both Alphabetical.
         parent.children.sort((a, b) {
           if (a.type != b.type) return a.type == "tree" ? -1 : 1;
           return a.name.toLowerCase().compareTo(b.name.toLowerCase());
@@ -166,7 +159,6 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
             size: child.size
           ));
           
-          // Recurse if folder
           if (child.type == "tree") {
             flatten(child, depth + 1);
           }
@@ -181,14 +173,13 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
         _expandedFolders.clear();
         _selectedFiles.clear();
         
-        // Auto-expand top level folders only
         for (var node in _fullFlatTree) {
           if (node.depth == 0 && node.type == NodeType.folder) {
             _expandedFolders.add(node.path);
           }
         }
         
-        _recalcVisible(); // Build the view list
+        _recalcVisible();
         _isLoading = false;
       });
       _setStatus("${flatResult.length} items loaded", Colors.green);
@@ -202,31 +193,10 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
   // --- 2. VISIBILITY & SELECTION LOGIC ---
 
   void _recalcVisible() {
-    // Filter the full list based on expanded parents
     _visibleTree = _fullFlatTree.where((node) {
       if (node.depth == 0) return true;
-      
-      // Check if immediate parent is expanded
       String parentPath = node.path.substring(0, node.path.lastIndexOf('/'));
-      // AND ensure the parent itself is visible (recursive check implicit via top-down expansion)
-      // Actually, we just need to know if ALL ancestors are in _expandedFolders
-      
-      // Optimization: We know the list is sorted Depth-First. 
-      // If a parent is closed, we skip all its children. 
-      // But simple set check is safer for now:
-      
-      // We check if the direct parent is expanded. 
-      // If the direct parent is collapsed, this node is hidden.
-      // If the direct parent is expanded, but the GRANDPARENT was collapsed, 
-      // the parent wouldn't be visible to be clicked. 
-      // So checking strict ancestry is best.
-      
-      // Fast check: Is the direct parent expanded?
       if (!_expandedFolders.contains(parentPath)) return false;
-      
-      // Robust check: Are all ancestors expanded?
-      // (Usually implied if we only click visible things, but "Expand All" might break it. 
-      //  Let's stick to direct parent check for speed, usually sufficient for UI interaction)
       return true;
     }).toList();
   }
@@ -235,7 +205,6 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
     setState(() {
       if (_expandedFolders.contains(path)) {
         _expandedFolders.remove(path);
-        // Remove any children from expanded too? No, keep state.
       } else {
         _expandedFolders.add(path);
       }
@@ -245,12 +214,10 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
 
   void _toggleFolderSelect(String folderPath, bool? select) {
     setState(() {
-      // Find all files that start with this folder path
-      // Since it's a list, we iterate.
       for (var node in _fullFlatTree) {
         if (node.type == NodeType.file && node.path.startsWith("$folderPath/")) {
-          if (select == true) _selectedPaths.add(node.path);
-          else _selectedPaths.remove(node.path);
+          if (select == true) _selectedFiles.add(node.path);
+          else _selectedFiles.remove(node.path);
         }
       }
     });
@@ -259,7 +226,7 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
   // --- 3. DOWNLOAD & SAVE ---
 
   Future<void> _saveAs() async {
-    if (_selectedPaths.isEmpty) {
+    if (_selectedFiles.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("No files selected")));
       return;
     }
@@ -278,11 +245,9 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
       int count = 0;
       final client = HttpClient();
 
-      for (String path in _selectedPaths) {
-        // Find node
+      for (String path in _selectedFiles) {
         final node = _fullFlatTree.firstWhere((n) => n.path == path);
         
-        // Fetch
         final req = await client.getUrl(Uri.parse(node.url));
         req.headers.set('User-Agent', 'SageTools');
         final resp = await req.close();
@@ -290,7 +255,6 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
         String raw = json['content'].toString().replaceAll('\n', '');
         String content = utf8.decode(base64.decode(raw));
 
-        // Save
         String localPath = "${saveDir.path}/${node.path}";
         File f = File(localPath);
         await f.parent.create(recursive: true);
@@ -323,7 +287,6 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
       appBar: AppBar(title: Text("Git Grabber", style: TextStyle(fontWeight: FontWeight.bold)), backgroundColor: theme.surfaceContainer, elevation: 0),
       body: Column(
         children: [
-          // Search
           Container(
             padding: EdgeInsets.all(16),
             decoration: BoxDecoration(color: theme.surfaceContainer, border: Border(bottom: BorderSide(color: theme.outlineVariant.withOpacity(0.2)))),
@@ -338,17 +301,15 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
                 Row(children: [
                   Icon(Icons.fork_right, size: 16, color: theme.primary), SizedBox(width: 8),
                   Expanded(child: DropdownButton<String>(value: _currentBranch, isExpanded: true, underline: SizedBox(), items: _branches.map((b) => DropdownMenuItem(value: b, child: Text(b, style: TextStyle(fontSize: 13)))).toList(), onChanged: (val) { if (val != null) _fetchTree(val); })),
-                  TextButton(onPressed: () => setState(() => _selectedPaths = _fullFlatTree.where((n) => n.type == NodeType.file).map((n) => n.path).toSet()), child: Text("All")),
-                  TextButton(onPressed: () => setState(() => _selectedPaths.clear()), child: Text("None")),
+                  TextButton(onPressed: () => setState(() => _selectedFiles = _fullFlatTree.where((n) => n.type == NodeType.file).map((n) => n.path).toSet()), child: Text("All")),
+                  TextButton(onPressed: () => setState(() => _selectedFiles.clear()), child: Text("None")),
                 ])
               ]
             ]),
           ),
           
-          // Status
           Container(width: double.infinity, padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4), color: _statusColor.withOpacity(0.1), child: Text(_statusMsg, style: TextStyle(fontSize: 11, color: _statusColor, fontWeight: FontWeight.bold))),
 
-          // Tree List
           Expanded(
             child: _visibleTree.isEmpty 
               ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.code, size: 64, color: theme.outlineVariant), SizedBox(height: 16), Text("No files to display", style: TextStyle(color: theme.onSurfaceVariant))]))
@@ -359,7 +320,6 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
                 ),
           ),
 
-          // Save Bar
           if (_fullFlatTree.isNotEmpty)
             Container(
               padding: EdgeInsets.all(16),
@@ -380,93 +340,57 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
   Widget _buildNodeTile(GitNode node, ColorScheme theme) {
     final bool isFolder = node.type == NodeType.folder;
     final bool isExpanded = _expandedFolders.contains(node.path);
-    final bool isSelected = _selectedPaths.contains(node.path);
+    final bool isSelected = _selectedFiles.contains(node.path);
     
-    // Guide Lines Logic: Calculate indentation padding
     double indent = 16.0 + (node.depth * 24.0);
 
-    return InkWell(
-      onTap: () {
-        if (isFolder) _toggleFolder(node.path);
-        else setState(() { if(isSelected) _selectedPaths.remove(node.path); else _selectedPaths.add(node.path); });
-      },
-      child: Container(
-        height: 48,
-        decoration: BoxDecoration(
-          border: Border(bottom: BorderSide(color: theme.outlineVariant.withOpacity(0.05))),
-          color: isSelected ? theme.primaryContainer.withOpacity(0.1) : null
-        ),
-        child: Stack(
-          children: [
-            // Guide Lines
-            if (node.depth > 0)
-              Positioned(
-                left: 0, top: 0, bottom: 0, width: indent,
-                child: CustomPaint(
-                  painter: TreeGuidePainter(depth: node.depth, color: theme.outlineVariant.withOpacity(0.2)),
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for(int k=0; k<node.depth; k++) 
+            Container(width: 1, color: theme.outlineVariant.withOpacity(0.1), margin: EdgeInsets.only(left: 19, right: 0)),
+          
+          Expanded(
+            child: InkWell(
+              onTap: () {
+                if (isFolder) _toggleFolder(node.path);
+                else setState(() { if(isSelected) _selectedFiles.remove(node.path); else _selectedFiles.add(node.path); });
+              },
+              child: Container(
+                height: 44,
+                padding: EdgeInsets.only(left: 8.0),
+                decoration: BoxDecoration(border: Border(bottom: BorderSide(color: theme.outlineVariant.withOpacity(0.05))), color: isSelected ? theme.primaryContainer.withOpacity(0.1) : null),
+                child: Row(
+                  children: [
+                    Icon(isFolder ? (isExpanded ? Icons.folder_open : Icons.folder) : Icons.insert_drive_file, size: 20, color: isFolder ? Colors.amber : theme.primary.withOpacity(0.8)),
+                    SizedBox(width: 12),
+                    Expanded(child: Text(node.name, style: TextStyle(fontSize: 13, color: theme.onSurface, fontWeight: isFolder ? FontWeight.w600 : FontWeight.normal), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                    if (isFolder)
+                      IconButton(icon: Icon(Icons.playlist_add_check, size: 20, color: theme.outline), tooltip: "Select All Inside", onPressed: () => _toggleFolderSelect(node.path, true))
+                    else
+                      Checkbox(value: isSelected, onChanged: (v) => setState(() { if(v!) _selectedFiles.add(node.path); else _selectedFiles.remove(node.path); }), visualDensity: VisualDensity.compact)
+                  ],
                 ),
               ),
-              
-            // Content
-            Padding(
-              padding: EdgeInsets.only(left: indent),
-              child: Row(
-                children: [
-                  // Icon
-                  Icon(
-                    isFolder ? (isExpanded ? Icons.folder_open : Icons.folder) : Icons.description_outlined,
-                    size: 20, 
-                    color: isFolder ? Colors.amber : theme.primary.withOpacity(0.8)
-                  ),
-                  SizedBox(width: 12),
-                  // Name
-                  Expanded(
-                    child: Text(
-                      node.name, 
-                      style: TextStyle(
-                        fontSize: 13, 
-                        color: theme.onSurface,
-                        fontWeight: isFolder ? FontWeight.w600 : FontWeight.normal
-                      ), 
-                      maxLines: 1, 
-                      overflow: TextOverflow.ellipsis
-                    )
-                  ),
-                  // Checkbox
-                  if (isFolder)
-                    IconButton(
-                      icon: Icon(Icons.playlist_add_check, size: 20, color: theme.outline),
-                      tooltip: "Select All Inside",
-                      onPressed: () => _toggleFolderSelect(node.path, true),
-                    )
-                  else
-                    Checkbox(
-                      value: isSelected, 
-                      onChanged: (v) => setState(() { if(v!) _selectedPaths.add(node.path); else _selectedPaths.remove(node.path); }),
-                      visualDensity: VisualDensity.compact,
-                    )
-                ],
-              ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 }
 
-// --- TREE GUIDE PAINTER ---
+// --- HELPERS ---
 class TreeGuidePainter extends CustomPainter {
   final int depth;
   final Color color;
   TreeGuidePainter({required this.depth, required this.color});
-
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()..color = color..strokeWidth = 1.0;
-    // Draw a vertical line for each depth level
     for (int i = 1; i <= depth; i++) {
-      double x = (i * 24.0) - 12.0; // Center of the indent block
+      double x = (i * 24.0) - 12.0; 
       canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
     }
   }
@@ -474,7 +398,6 @@ class TreeGuidePainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-// --- DATA CLASSES ---
 enum NodeType { file, folder }
 
 class GitNode {
