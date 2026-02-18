@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf_render/pdf_render.dart';
-import 'package:syncfusion_flutter_pdf/syncfusion_flutter_pdf.dart' as syncfusion;
+import 'package:syncfusion_flutter_pdf/pdf.dart' as syncfusion;
 import 'package:permission_handler/permission_handler.dart';
 
 class PdfCropScreen extends StatefulWidget {
