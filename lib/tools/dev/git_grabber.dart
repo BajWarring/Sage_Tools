@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // For Clipboard
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -109,7 +110,6 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
       final json = jsonDecode(await resp.transform(utf8.decoder).join());
       final List rawList = json['tree'];
 
-      // Build Map Hierarchy
       Map<String, _TempNode> nodeMap = {};
       _TempNode root = _TempNode(path: "", type: "tree", name: "root", children: []);
       nodeMap[""] = root; 
@@ -166,7 +166,7 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
       setState(() {
         _currentBranch = branch;
         _fullFlatTree = flatResult;
-        _expandedFolders.clear(); // Ensure all closed at start
+        _expandedFolders.clear();
         _selectedFiles.clear();
         _recalcVisible();
         _isLoading = false;
@@ -201,18 +201,16 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
     });
   }
 
-  // Select/Deselect all files inside a folder
-  void _toggleFolderSelect(String folderPath, bool? select) {
+  void _toggleFolderSelect(String folderPath, bool select) {
     setState(() {
       final children = _fullFlatTree.where((n) => n.path.startsWith("$folderPath/") && n.type == NodeType.file);
       for (var child in children) {
-        if (select == true) _selectedFiles.add(child.path);
+        if (select) _selectedFiles.add(child.path);
         else _selectedFiles.remove(child.path);
       }
     });
   }
 
-  // Determine state of folder checkbox (True=All, Null=Some, False=None)
   bool? _getFolderState(String folderPath) {
     final children = _fullFlatTree.where((n) => n.path.startsWith("$folderPath/") && n.type == NodeType.file).toList();
     if (children.isEmpty) return false;
@@ -221,7 +219,7 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
     
     if (selectedCount == 0) return false;
     if (selectedCount == children.length) return true;
-    return null; // Tristate (dash)
+    return null; // Tristate
   }
 
   // --- 3. DOWNLOAD & SAVE ---
@@ -272,42 +270,15 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
     }
   }
 
+  // --- 4. PREVIEW POPUP ---
+
   void _showCodePreview(GitNode node) async {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => Dialog(
-        backgroundColor: Theme.of(ctx).colorScheme.surfaceContainer,
-        child: Container(
-          padding: EdgeInsets.all(16),
-          height: 500,
-          child: Column(
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(child: Text(node.name, style: TextStyle(fontWeight: FontWeight.bold))),
-                  IconButton(onPressed: () => Navigator.pop(ctx), icon: Icon(Icons.close))
-                ],
-              ),
-              Divider(),
-              Expanded(
-                child: FutureBuilder<String>(
-                  future: _fetchContent(node),
-                  builder: (context, snap) {
-                    if (!snap.hasData) return Center(child: CircularProgressIndicator());
-                    return SingleChildScrollView(
-                      child: SelectableText(
-                        snap.data!, 
-                        style: TextStyle(fontFamily: 'monospace', fontSize: 12),
-                      ),
-                    );
-                  },
-                ),
-              )
-            ],
-          ),
-        ),
+      builder: (ctx) => _CodePreviewDialog(
+        node: node, 
+        fetcher: _fetchContent
       )
     );
   }
@@ -333,12 +304,9 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
     if(mounted) setState(() { _statusMsg = msg; _statusColor = color; });
   }
 
-  // --- 4. UI COMPONENTS ---
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context).colorScheme;
-    
     return Scaffold(
       backgroundColor: theme.surface,
       appBar: AppBar(title: Text("Git Grabber", style: TextStyle(fontWeight: FontWeight.bold)), backgroundColor: theme.surfaceContainer, elevation: 0),
@@ -398,7 +366,7 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
     final bool isFolder = node.type == NodeType.folder;
     final bool isExpanded = _expandedFolders.contains(node.path);
     
-    // Checkbox State
+    // Checkbox State Logic
     bool? checkboxState;
     if (isFolder) {
       checkboxState = _getFolderState(node.path);
@@ -426,46 +394,34 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
                 decoration: BoxDecoration(border: Border(bottom: BorderSide(color: theme.outlineVariant.withOpacity(0.05))), color: (checkboxState == true) ? theme.primaryContainer.withOpacity(0.1) : null),
                 child: Row(
                   children: [
-                    // 1. CHECKBOX (Left Side)
+                    // 1. CHECKBOX LEFT
                     Checkbox(
                       value: checkboxState, 
                       tristate: isFolder,
                       onChanged: (v) {
-                        if (isFolder) _toggleFolderSelect(node.path, v != false); 
-                        else setState(() { if(v == true) _selectedFiles.add(node.path); else _selectedFiles.remove(node.path); });
+                         if (isFolder) {
+                           // Folder Toggle Logic:
+                           // If currently True (All), go to False (None)
+                           // If currently Null (Mixed) or False (None), go to True (All)
+                           bool newState = !(checkboxState == true);
+                           _toggleFolderSelect(node.path, newState);
+                         } else {
+                           setState(() { if(v == true) _selectedFiles.add(node.path); else _selectedFiles.remove(node.path); });
+                         }
                       },
                       visualDensity: VisualDensity.compact,
                     ),
                     
                     // 2. ICON
-                    Icon(
-                      isFolder ? (isExpanded ? Icons.folder_open : Icons.folder) : Icons.insert_drive_file,
-                      size: 20, 
-                      color: isFolder ? Colors.amber : theme.primary.withOpacity(0.8)
-                    ),
+                    Icon(isFolder ? (isExpanded ? Icons.folder_open : Icons.folder) : Icons.insert_drive_file, size: 20, color: isFolder ? Colors.amber : theme.primary.withOpacity(0.8)),
                     SizedBox(width: 12),
                     
                     // 3. NAME
-                    Expanded(
-                      child: Text(
-                        node.name, 
-                        style: TextStyle(
-                          fontSize: 13, 
-                          color: theme.onSurface, 
-                          fontWeight: isFolder ? FontWeight.w600 : FontWeight.normal
-                        ), 
-                        maxLines: 1, 
-                        overflow: TextOverflow.ellipsis
-                      )
-                    ),
+                    Expanded(child: Text(node.name, style: TextStyle(fontSize: 13, color: theme.onSurface, fontWeight: isFolder ? FontWeight.w600 : FontWeight.normal), maxLines: 1, overflow: TextOverflow.ellipsis)),
                     
-                    // 4. PREVIEW BUTTON (Right Side, for Files)
+                    // 4. PREVIEW BUTTON RIGHT
                     if (!isFolder)
-                      IconButton(
-                        icon: Icon(Icons.visibility_outlined, size: 18, color: theme.outline),
-                        onPressed: () => _showCodePreview(node),
-                        tooltip: "Preview Code",
-                      ),
+                      IconButton(icon: Icon(Icons.visibility_outlined, size: 18, color: theme.outline), onPressed: () => _showCodePreview(node), tooltip: "Preview"),
                     SizedBox(width: 8),
                   ],
                 ),
@@ -475,6 +431,148 @@ class _GitGrabberScreenState extends State<GitGrabberScreen> {
         ],
       ),
     );
+  }
+}
+
+// --- 5. CODE PREVIEW DIALOG ---
+class _CodePreviewDialog extends StatefulWidget {
+  final GitNode node;
+  final Future<String> Function(GitNode) fetcher;
+  const _CodePreviewDialog({required this.node, required this.fetcher});
+
+  @override
+  __CodePreviewDialogState createState() => __CodePreviewDialogState();
+}
+
+class __CodePreviewDialogState extends State<_CodePreviewDialog> {
+  String? _content;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  void _load() async {
+    final text = await widget.fetcher(widget.node);
+    if(mounted) setState(() { _content = text; _loading = false; });
+  }
+
+  void _copy() {
+    if (_content != null) {
+      Clipboard.setData(ClipboardData(text: _content!));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Code copied!"), duration: Duration(seconds: 1)));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context).colorScheme;
+    
+    return Dialog(
+      backgroundColor: theme.surfaceContainer,
+      insetPadding: EdgeInsets.all(16),
+      child: Container(
+        height: 600,
+        child: Column(
+          children: [
+            // Header
+            Padding(
+              padding: EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Icon(Icons.code, color: theme.primary),
+                  SizedBox(width: 12),
+                  Expanded(child: Text(widget.node.name, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
+                  IconButton(onPressed: _copy, icon: Icon(Icons.copy, size: 20), tooltip: "Copy Code"),
+                  IconButton(onPressed: () => Navigator.pop(context), icon: Icon(Icons.close))
+                ],
+              ),
+            ),
+            Divider(height: 1),
+            
+            // Content
+            Expanded(
+              child: _loading 
+                ? Center(child: CircularProgressIndicator()) 
+                : SingleChildScrollView(
+                    padding: EdgeInsets.all(16),
+                    child: _CodeHighlighter(code: _content!, theme: theme),
+                  ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// --- 6. SIMPLE SYNTAX HIGHLIGHTER ---
+class _CodeHighlighter extends StatelessWidget {
+  final String code;
+  final ColorScheme theme;
+  const _CodeHighlighter({required this.code, required this.theme});
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = code.split('\n');
+    final digitCount = lines.length.toString().length;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Line Numbers
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: List.generate(lines.length, (i) => 
+            Padding(
+              padding: EdgeInsets.only(right: 12),
+              child: Text("${i+1}", style: TextStyle(fontFamily: 'monospace', fontSize: 12, color: theme.onSurfaceVariant.withOpacity(0.5))),
+            )
+          ),
+        ),
+        
+        // Code
+        Expanded(
+          child: SelectableText.rich(
+            TextSpan(children: _highlight(code)),
+            style: TextStyle(fontFamily: 'monospace', fontSize: 12, color: theme.onSurface),
+          ),
+        ),
+      ],
+    );
+  }
+
+  List<TextSpan> _highlight(String text) {
+    final List<TextSpan> spans = [];
+    final RegExp tokenReg = RegExp(r'(\/\/.*)|(".*?")|(\b(import|class|void|var|final|const|if|else|return|true|false|null|int|double|String|bool|List|Map|for|while)\b)|(\d+)|([a-zA-Z_]\w*)');
+    
+    int start = 0;
+    for (var match in tokenReg.allMatches(text)) {
+      if (match.start > start) {
+        spans.add(TextSpan(text: text.substring(start, match.start)));
+      }
+      
+      final String token = match.group(0)!;
+      Color? color;
+      
+      if (match.group(1) != null) color = Colors.green; // Comments
+      else if (match.group(2) != null) color = Colors.orange; // Strings
+      else if (match.group(3) != null) color = Colors.purpleAccent; // Keywords
+      else if (match.group(5) != null) color = Colors.blue; // Numbers
+      else if (match.group(6) != null) {
+         if (token.startsWith(RegExp(r'[A-Z]'))) color = Colors.yellow; // Types/Classes
+      }
+
+      spans.add(TextSpan(text: token, style: TextStyle(color: color)));
+      start = match.end;
+    }
+    
+    if (start < text.length) {
+      spans.add(TextSpan(text: text.substring(start)));
+    }
+    return spans;
   }
 }
 
