@@ -185,33 +185,30 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
       final syncfusion.PdfDocument destDoc = syncfusion.PdfDocument();
       destDoc.pageSettings.margins.all = 0;
 
-      // ── KEY FIX ──────────────────────────────────────────────────────────
-      // Syncfusion internally stores page dimensions in portrait order
-      // (shorter side = width, longer side = height) and will SILENTLY SWAP
-      // cropW and cropH when cropW > cropH — making every landscape crop
-      // come out as a portrait page with the wrong region shown.
-      //
-      // The fix: explicitly set PdfPageOrientation.landscape BEFORE
-      // assigning the size whenever the crop is wider than it is tall.
-      // This tells Syncfusion to keep (cropW, cropH) as-is without swapping.
+      // Set page size and orientation for the new document
+      // This is crucial for defining the canvas for the cropped content.
       if (cropW > cropH) {
-        destDoc.pageSettings.orientation =
-            syncfusion.PdfPageOrientation.landscape;
+        destDoc.pageSettings.orientation = syncfusion.PdfPageOrientation.landscape;
       } else {
-        destDoc.pageSettings.orientation =
-            syncfusion.PdfPageOrientation.portrait;
+        destDoc.pageSettings.orientation = syncfusion.PdfPageOrientation.portrait;
       }
-      // Set size AFTER orientation so Syncfusion respects it correctly
-      destDoc.pageSettings.size = Size(cropW, cropH);
-      // ─────────────────────────────────────────────────────────────────────
+      destDoc.pageSettings.size = ui.Size(cropW, cropH);
 
-      // 5. Draw original page as vector template, offset so only the
-      //    selected crop region is visible inside the new smaller page.
-      final syncfusion.PdfTemplate template = sourcePage.createTemplate();
+      // Add a new page to the destination document
       final syncfusion.PdfPage destPage = destDoc.pages.add();
-      destPage.graphics.drawPdfTemplate(template, Offset(-cropX, -cropY));
 
-      // 6. Save to file
+      // 5. Create a graphics state for the destination page
+      final syncfusion.PdfGraphics graphics = destPage.graphics;
+
+      // 6. Apply the crop transformation directly to the graphics context.
+      //    This ensures that only the desired region of the original page
+      //    is drawn onto the new page, preserving all vector content.
+      graphics.save();
+      graphics.translateTransform(-cropX, -cropY);
+      sourcePage.draw(graphics, Rect.fromLTWH(0, 0, pdfW, pdfH));
+      graphics.restore();
+
+      // 7. Save to file
       Directory? directory;
       if (Platform.isAndroid) {
         directory = Directory('/storage/emulated/0/Download');
@@ -234,459 +231,271 @@ class _PdfCropScreenState extends State<PdfCropScreen> {
 
       if (mounted) {
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text("Saved to: ${file.path}"),
-          backgroundColor: Theme.of(context).colorScheme.primary,
-          duration: Duration(seconds: 4),
-        ));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('PDF cropped and saved to ${file.path}'))
+        );
       }
     } catch (e) {
-      print("Save Error: $e");
-      setState(() => _isLoading = false);
+      print("Error saving PDF: $e");
       if (mounted)
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text("Error: $e")));
+            .showSnackBar(SnackBar(content: Text("Error saving PDF: $e")));
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  // ─── HANDLE DRAG ───────────────────────────────────────────────────────────
-  void _onHandlePan(DragUpdateDetails d, String type, double scale) {
-    if (_pageSize == null) return;
-    double dx = d.delta.dx / scale;
-    double dy = d.delta.dy / scale;
-
-    setState(() {
-      Rect r = _cropRect;
-      double minS = 50.0;
-      double newL = r.left, newT = r.top, newR = r.right, newB = r.bottom;
-
-      if (type == 'body') {
-        double pL = newL + dx, pT = newT + dy;
-        double w = r.width, h = r.height;
-        if (pL < 0) pL = 0;
-        if (pL + w > _pageSize!.width) pL = _pageSize!.width - w;
-        if (pT < 0) pT = 0;
-        if (pT + h > _pageSize!.height) pT = _pageSize!.height - h;
-        _cropRect = Rect.fromLTWH(pL, pT, w, h);
-        _updateControllers();
-        return;
-      }
-
-      if (type.contains('l')) newL += dx;
-      if (type.contains('r')) newR += dx;
-      if (type.contains('t')) newT += dy;
-      if (type.contains('b')) newB += dy;
-
-      if (_isRatioLocked) {
-        var list = _isLandscapeRatio ? _ratiosLandscape : _ratiosPortrait;
-        double? ratio = list[_selectedRatioIndex]['val'];
-        if (ratio != null) {
-          bool drivingW = type.contains('l') || type.contains('r');
-          if (drivingW) {
-            double propW = newR - newL;
-            double reqH = propW / ratio;
-            double center = r.top + r.height / 2;
-            double pT = type.contains('t')
-                ? newB - reqH
-                : (type.contains('b') ? newT : center - reqH / 2);
-            double pB = type.contains('b')
-                ? newT + reqH
-                : (type.contains('t') ? newT : center + reqH / 2);
-            if (pT < 0 ||
-                pB > _pageSize!.height ||
-                newL < 0 ||
-                newR > _pageSize!.width) return;
-            newT = pT;
-            newB = pB;
-          } else {
-            double propH = newB - newT;
-            double reqW = propH * ratio;
-            double center = r.left + r.width / 2;
-            double pL = type.contains('l')
-                ? newR - reqW
-                : (type.contains('r') ? newL : center - reqW / 2);
-            double pR = type.contains('r')
-                ? newL + reqW
-                : (type.contains('l') ? newL : center + reqW / 2);
-            if (pL < 0 ||
-                pR > _pageSize!.width ||
-                newT < 0 ||
-                newB > _pageSize!.height) return;
-            newL = pL;
-            newR = pR;
-          }
-        }
-      }
-
-      if (newR - newL < minS || newB - newT < minS) return;
-      if (newL < 0 ||
-          newT < 0 ||
-          newR > _pageSize!.width ||
-          newB > _pageSize!.height) return;
-      _cropRect = Rect.fromLTRB(newL, newT, newR, newB);
-      _updateControllers();
-    });
+  @override
+  void dispose() {
+    _xCtrl.dispose();
+    _yCtrl.dispose();
+    _wCtrl.dispose();
+    _hCtrl.dispose();
+    _previewImage?.dispose();
+    super.dispose();
   }
 
-  // ─── BUILD ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context).colorScheme;
-    final ratioList = _isLandscapeRatio ? _ratiosLandscape : _ratiosPortrait;
-    Color bg = theme.surface;
-    Color panelBg = theme.surfaceContainer;
-    Color border = theme.outlineVariant.withOpacity(0.2);
-    Color text = theme.onSurface;
-    Color subText = theme.onSurfaceVariant;
 
     return Scaffold(
-      backgroundColor: bg,
       appBar: AppBar(
-        backgroundColor: bg,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-            icon: Icon(Icons.chevron_left, color: subText, size: 28),
-            onPressed: () => Navigator.pop(context)),
-        title: Text("Crop PDF",
-            style: TextStyle(
-                color: text, fontWeight: FontWeight.bold, fontSize: 20)),
-        centerTitle: false,
-        bottom: PreferredSize(
-            preferredSize: Size.fromHeight(1),
-            child: Container(color: border, height: 1)),
+        title: Text('Crop PDF'),
+        backgroundColor: theme.surface,
+        actions: [
+          IconButton(
+            icon: Icon(_isRatioLocked ? Icons.lock : Icons.lock_open),
+            onPressed: _toggleLockState,
+            tooltip: 'Toggle Ratio Lock',
+          ),
+          PopupMenuButton<int>(
+            icon: Icon(Icons.aspect_ratio),
+            onSelected: _applyRatio,
+            itemBuilder: (context) {
+              var list = _isLandscapeRatio ? _ratiosLandscape : _ratiosPortrait;
+              return list.asMap().entries.map((entry) {
+                int idx = entry.key;
+                Map<String, dynamic> ratio = entry.value;
+                return PopupMenuItem<int>(
+                  value: idx,
+                  child: Text(ratio['label']),
+                );
+              }).toList();
+            },
+          ),
+          IconButton(
+            icon: _isLoading
+                ? SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Icon(Icons.save),
+            onPressed: _isLoading ? null : _savePdf,
+            tooltip: 'Save Cropped PDF',
+          ),
+        ],
       ),
       body: _isLoading
           ? Center(child: CircularProgressIndicator())
-          : Column(children: [
-              // ── Top controls ──────────────────────────────────────────────
-              Container(
-                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                decoration: BoxDecoration(
-                    color: panelBg,
-                    border: Border(bottom: BorderSide(color: border))),
-                child: Column(children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      TextButton.icon(
-                          onPressed: () {},
-                          icon: Icon(Icons.auto_fix_high, size: 16),
-                          label: Text("Auto Detect"),
-                          style: TextButton.styleFrom(
-                              foregroundColor: theme.primary)),
-                      OutlinedButton.icon(
-                        onPressed: () => setState(() {
-                          _isLandscapeRatio = !_isLandscapeRatio;
-                          _selectedRatioIndex = 0;
-                          _isRatioLocked = false;
-                        }),
-                        icon: Icon(
-                            _isLandscapeRatio
-                                ? Icons.crop_landscape
-                                : Icons.crop_portrait,
-                            size: 16),
-                        label: Text(
-                            _isLandscapeRatio ? "Landscape" : "Portrait"),
-                        style: OutlinedButton.styleFrom(
-                            foregroundColor: subText,
-                            side: BorderSide(color: border)),
-                      ),
-                    ],
-                  ),
-                  SizedBox(height: 12),
-                  SizedBox(
-                    height: 36,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: ratioList.length,
-                      separatorBuilder: (_, __) => SizedBox(width: 8),
-                      itemBuilder: (ctx, i) {
-                        bool isSelected = i == _selectedRatioIndex;
-                        String label = ratioList[i]['label'];
-                        IconData? icon;
-                        if (i == 0) {
-                          label = "";
-                          icon =
-                              _isRatioLocked ? Icons.lock : Icons.lock_open;
-                        }
-                        return GestureDetector(
-                          onTap: () {
-                            if (i == 0)
-                              _toggleLockState();
-                            else
-                              _applyRatio(i);
-                          },
-                          child: Container(
-                            width: i == 0 ? 50 : null,
-                            padding: EdgeInsets.symmetric(horizontal: 16),
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                                color: isSelected ? theme.primary : panelBg,
-                                border: Border.all(
-                                    color: isSelected
-                                        ? theme.primary
-                                        : border),
-                                borderRadius: BorderRadius.circular(12)),
-                            child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  if (icon != null)
-                                    Icon(icon,
-                                        size: 16,
-                                        color: isSelected
-                                            ? theme.onPrimary
-                                            : subText),
-                                  if (label.isNotEmpty)
-                                    Text(label,
-                                        style: TextStyle(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.bold,
-                                            color: isSelected
-                                                ? theme.onPrimary
-                                                : subText))
-                                ]),
+          : Column(
+              children: [
+                Expanded(
+                  child: InteractiveViewer(
+                    boundaryMargin: EdgeInsets.all(20),
+                    minScale: 0.1,
+                    maxScale: 4.0,
+                    child: Stack(
+                      children: [
+                        // PDF Preview Image
+                        if (_previewImage != null)
+                          CustomPaint(
+                            size: _imageSize!,
+                            painter: _ImagePainter(_previewImage!),
                           ),
-                        );
-                      },
-                    ),
-                  )
-                ]),
-              ),
-
-              // ── Preview canvas ────────────────────────────────────────────
-              Expanded(
-                child: Container(
-                  color: theme.surfaceContainerHighest,
-                  child: LayoutBuilder(builder: (ctx, constraints) {
-                    if (_previewImage == null) return Container();
-
-                    double viewW = constraints.maxWidth;
-                    double viewH = constraints.maxHeight;
-                    double imgW = _pageSize!.width;
-                    double imgH = _pageSize!.height;
-                    double scale = min(viewW / imgW, viewH / imgH) * 0.9;
-                    double displayW = imgW * scale;
-                    double displayH = imgH * scale;
-                    double offX = (viewW - displayW) / 2;
-                    double offY = (viewH - displayH) / 2;
-
-                    return Stack(children: [
-                      Positioned(
-                        left: offX,
-                        top: offY,
-                        width: displayW,
-                        height: displayH,
-                        child: Stack(children: [
-                          Container(
+                        // Crop Overlay
+                        Positioned.fromRect(
+                          rect: _cropRect,
+                          child: GestureDetector(
+                            onPanUpdate: (details) {
+                              setState(() {
+                                _cropRect = _cropRect.translate(
+                                    details.delta.dx,
+                                    details.delta.dy);
+                                _cropRect = Rect.fromLTWH(
+                                  max(0, _cropRect.left),
+                                  max(0, _cropRect.top),
+                                  _cropRect.width,
+                                  _cropRect.height,
+                                );
+                                _cropRect = Rect.fromLTWH(
+                                  min(_cropRect.left,
+                                      _imageSize!.width - _cropRect.width),
+                                  min(_cropRect.top,
+                                      _imageSize!.height - _cropRect.height),
+                                  _cropRect.width,
+                                  _cropRect.height,
+                                );
+                                _updateControllers();
+                              });
+                            },
+                            child: Container(
                               decoration: BoxDecoration(
-                                  color: panelBg,
-                                  boxShadow: [
-                                    BoxShadow(
-                                        color: Colors.black12,
-                                        blurRadius: 10)
-                                  ]),
-                              child: RawImage(
-                                  image: _previewImage,
-                                  fit: BoxFit.contain)),
-                          // Dark overlay — top
-                          Positioned(
-                              top: 0,
-                              left: 0,
-                              right: 0,
-                              height: _cropRect.top * scale,
-                              child: ColoredBox(color: Colors.black54)),
-                          // Dark overlay — bottom
-                          Positioned(
-                              top: _cropRect.bottom * scale,
-                              left: 0,
-                              right: 0,
-                              bottom: 0,
-                              child: ColoredBox(color: Colors.black54)),
-                          // Dark overlay — left
-                          Positioned(
-                              top: _cropRect.top * scale,
-                              bottom:
-                                  (_pageSize!.height - _cropRect.bottom) *
-                                      scale,
-                              left: 0,
-                              width: _cropRect.left * scale,
-                              child: ColoredBox(color: Colors.black54)),
-                          // Dark overlay — right
-                          Positioned(
-                              top: _cropRect.top * scale,
-                              bottom:
-                                  (_pageSize!.height - _cropRect.bottom) *
-                                      scale,
-                              left: _cropRect.right * scale,
-                              right: 0,
-                              child: ColoredBox(color: Colors.black54)),
-                          // Crop box body
-                          Positioned(
-                            left: _cropRect.left * scale,
-                            top: _cropRect.top * scale,
-                            width: _cropRect.width * scale,
-                            height: _cropRect.height * scale,
-                            child: GestureDetector(
-                              onPanUpdate: (d) =>
-                                  _onHandlePan(d, 'body', scale),
-                              child: Container(
-                                decoration: BoxDecoration(
-                                    border: Border.all(
-                                        color: theme.primary, width: 2)),
-                                child: Stack(children: [
-                                  Column(children: [
-                                    Spacer(),
-                                    Divider(
-                                        color: Colors.white30, height: 1),
-                                    Spacer(),
-                                    Divider(
-                                        color: Colors.white30, height: 1),
-                                    Spacer()
-                                  ]),
-                                  Row(children: [
-                                    Spacer(),
-                                    VerticalDivider(
-                                        color: Colors.white30, width: 1),
-                                    Spacer(),
-                                    VerticalDivider(
-                                        color: Colors.white30, width: 1),
-                                    Spacer()
-                                  ]),
-                                ]),
+                                border: Border.all(
+                                    color: theme.primary, width: 2),
+                              ),
+                              child: Stack(
+                                children: [
+                                  // Corners for resizing
+                                  _buildCorner(Alignment.topLeft),
+                                  _buildCorner(Alignment.topRight),
+                                  _buildCorner(Alignment.bottomLeft),
+                                  _buildCorner(Alignment.bottomRight),
+                                ],
                               ),
                             ),
                           ),
-                          ..._buildHandles(scale, theme.primary),
-                        ]),
-                      )
-                    ]);
-                  }),
-                ),
-              ),
-
-              // ── Bottom panel ──────────────────────────────────────────────
-              Container(
-                padding: EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                    color: panelBg,
-                    borderRadius:
-                        BorderRadius.vertical(top: Radius.circular(24)),
-                    boxShadow: [
-                      BoxShadow(
-                          color: Colors.black.withOpacity(0.05),
-                          blurRadius: 10,
-                          offset: Offset(0, -4))
-                    ]),
-                child: Column(children: [
-                  Row(children: [
-                    _buildInput('X', _xCtrl, theme),
-                    SizedBox(width: 12),
-                    _buildInput('Y', _yCtrl, theme),
-                    SizedBox(width: 12),
-                    _buildInput('W', _wCtrl, theme),
-                    SizedBox(width: 12),
-                    _buildInput('H', _hCtrl, theme)
-                  ]),
-                  SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 50,
-                    child: ElevatedButton.icon(
-                      onPressed: _savePdf,
-                      icon: Icon(Icons.download_rounded, size: 20),
-                      label: Text("Export PDF",
-                          style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold)),
-                      style: ElevatedButton.styleFrom(
-                          backgroundColor: theme.primary,
-                          foregroundColor: theme.onPrimary,
-                          elevation: 4,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16))),
+                        ),
+                      ],
                     ),
-                  )
-                ]),
-              )
-            ]),
+                  ),
+                ),
+                // Crop controls
+                Container(
+                  padding: EdgeInsets.all(16),
+                  color: theme.surfaceContainer,
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(child: _buildTextField('X', _xCtrl)),
+                          SizedBox(width: 8),
+                          Expanded(child: _buildTextField('Y', _yCtrl)),
+                        ],
+                      ),
+                      SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(child: _buildTextField('W', _wCtrl)),
+                          SizedBox(width: 8),
+                          Expanded(child: _buildTextField('H', _hCtrl)),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
     );
   }
 
-  List<Widget> _buildHandles(double scale, Color color) {
-    double L = _cropRect.left * scale;
-    double T = _cropRect.top * scale;
-    double R = _cropRect.right * scale;
-    double B = _cropRect.bottom * scale;
-    double cX = L + (_cropRect.width * scale / 2);
-    double cY = T + (_cropRect.height * scale / 2);
-    double size = 30.0;
-    double dot = 12.0;
-
-    Widget handle(double x, double y, String type) {
-      return Positioned(
-        left: x - (size / 2),
-        top: y - (size / 2),
-        width: size,
-        height: size,
-        child: GestureDetector(
-          onPanUpdate: (d) => _onHandlePan(d, type, scale),
-          child: Container(
-              alignment: Alignment.center,
-              color: Colors.transparent,
-              child: Container(
-                  width: dot,
-                  height: dot,
-                  decoration: BoxDecoration(
-                      color: color,
-                      shape: BoxShape.circle,
-                      border:
-                          Border.all(color: Colors.white, width: 2)))),
-        ),
-      );
-    }
-
-    return [
-      handle(L, T, 'tl'),
-      handle(cX, T, 't'),
-      handle(R, T, 'tr'),
-      handle(L, cY, 'l'),
-      handle(R, cY, 'r'),
-      handle(L, B, 'bl'),
-      handle(cX, B, 'b'),
-      handle(R, B, 'br')
-    ];
+  Widget _buildTextField(String label, TextEditingController controller) {
+    return TextField(
+      controller: controller,
+      keyboardType: TextInputType.number,
+      decoration: InputDecoration(
+        labelText: label,
+        border: OutlineInputBorder(),
+        isDense: true,
+      ),
+      onChanged: (val) => _onInputChanged(),
+    );
   }
 
-  Widget _buildInput(
-      String label, TextEditingController ctrl, ColorScheme theme) {
-    return Expanded(
+  Widget _buildCorner(Alignment alignment) {
+    return Align(
+      alignment: alignment,
+      child: GestureDetector(
+        onPanUpdate: (details) {
+          setState(() {
+            double newLeft = _cropRect.left;
+            double newTop = _cropRect.top;
+            double newWidth = _cropRect.width;
+            double newHeight = _cropRect.height;
+
+            if (alignment == Alignment.topLeft ||
+                alignment == Alignment.bottomLeft) {
+              newLeft += details.delta.dx;
+              newWidth -= details.delta.dx;
+            }
+            if (alignment == Alignment.topLeft ||
+                alignment == Alignment.topRight) {
+              newTop += details.delta.dy;
+              newHeight -= details.delta.dy;
+            }
+            if (alignment == Alignment.topRight ||
+                alignment == Alignment.bottomRight) {
+              newWidth += details.delta.dx;
+            }
+            if (alignment == Alignment.bottomLeft ||
+                alignment == Alignment.bottomRight) {
+              newHeight += details.delta.dy;
+            }
+
+            // Ensure minimum size
+            newWidth = max(10, newWidth);
+            newHeight = max(10, newHeight);
+
+            // Ensure crop rect stays within image bounds
+            newLeft = max(0, newLeft);
+            newTop = max(0, newTop);
+            if (newLeft + newWidth > _imageSize!.width) {
+              newWidth = _imageSize!.width - newLeft;
+            }
+            if (newTop + newHeight > _imageSize!.height) {
+              newHeight = _imageSize!.height - newTop;
+            }
+
+            _cropRect = Rect.fromLTWH(newLeft, newTop, newWidth, newHeight);
+
+            if (_isRatioLocked) {
+              var list = _isLandscapeRatio ? _ratiosLandscape : _ratiosPortrait;
+              double? ratio = list[_selectedRatioIndex]['val'];
+              if (ratio != null) {
+                if (newWidth / newHeight > ratio) {
+                  newWidth = newHeight * ratio;
+                } else {
+                  newHeight = newWidth / ratio;
+                }
+                _cropRect = Rect.fromLTWH(newLeft, newTop, newWidth, newHeight);
+              }
+            }
+
+            _updateControllers();
+          });
+        },
         child: Container(
-            padding: EdgeInsets.all(8),
-            decoration: BoxDecoration(
-                color: theme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                    color: theme.outlineVariant.withOpacity(0.2))),
-            child: Column(children: [
-              Text(label,
-                  style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      color: theme.onSurfaceVariant)),
-              TextField(
-                  controller: ctrl,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      color: theme.onSurface),
-                  decoration: InputDecoration(
-                      isDense: true,
-                      border: InputBorder.none,
-                      contentPadding: EdgeInsets.zero),
-                  keyboardType: TextInputType.number,
-                  onSubmitted: (_) => _onInputChanged())
-            ])));
+          width: 24,
+          height: 24,
+          decoration: BoxDecoration(
+            color: theme.primary, // Adjust color as needed
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 2),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ImagePainter extends CustomPainter {
+  final ui.Image image;
+
+  _ImagePainter(this.image);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    paintImage(
+      canvas: canvas,
+      rect: Rect.fromLTWH(0, 0, size.width, size.height),
+      image: image,
+      fit: BoxFit.fill,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) {
+    return false;
   }
 }
